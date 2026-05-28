@@ -8,6 +8,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -244,9 +245,25 @@ func (h *CliHandler) GetApiKey(c *gin.Context) {
 		}
 	}
 
-	// 2. 不存在则创建（默认配额无限、永不过期）
+	// 2. 不存在则创建。先选用户可用的第一个 group 作为 default，避免 key 不绑 group
+	// 导致网关报 "API Key is not assigned to any group"。
+	groups, err := h.apiKeySvc.GetAvailableGroups(ctx, subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if len(groups) == 0 {
+		response.ErrorFrom(c, infraerrors.BadRequest(
+			"NO_AVAILABLE_GROUP",
+			"no group available for this user; ask administrator to bind a group",
+		))
+		return
+	}
+	defaultGroupID := groups[0].ID
+
 	created, err := h.apiKeySvc.Create(ctx, subject.UserID, service.CreateAPIKeyRequest{
-		Name: cliApiKeyName,
+		Name:    cliApiKeyName,
+		GroupID: &defaultGroupID,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
