@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -74,11 +75,16 @@ func (h *CliHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// 2. 立即把 nickname 写入 Username 字段
+	// 2. 立即把 nickname 写入 Username 字段。
+	// 失败不阻断注册（用户已创建），但必须打日志，避免静默吞错。
 	if nick := strings.TrimSpace(req.Nickname); nick != "" {
-		if updated, perr := h.userSvc.UpdateProfile(ctx, user.ID, service.UpdateProfileRequest{
+		updated, perr := h.userSvc.UpdateProfile(ctx, user.ID, service.UpdateProfileRequest{
 			Username: &nick,
-		}); perr == nil && updated != nil {
+		})
+		if perr != nil {
+			slog.Warn("cli register: failed to set nickname after creating user",
+				"user_id", user.ID, "email", user.Email, "err", perr)
+		} else if updated != nil {
 			user = updated
 		}
 	}
@@ -252,14 +258,16 @@ func (h *CliHandler) GetApiKey(c *gin.Context) {
 // GetLlm GET /api/v1/cli/llm  (需要 JWT)
 //
 // 返回桌面端可见的 LLM 网关 base URL + 用户可见模型列表。
-// M1：模型列表先返回空数组，由 M2 后基于 group/channel 配置后再填充。
+// 模型列表通过 APIKeyService.GetAvailableGroups 拿到用户能绑的所有 group，再聚合
+// 它们的 ModelsListConfig.Models 去重后返出。
 func (h *CliHandler) GetLlm(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "user not authenticated")
 		return
 	}
-	_ = subject // M2+ 用 subject.UserID 拿用户 group，再查可见模型
+
+	ctx := c.Request.Context()
 
 	base := strings.TrimRight(h.cfg.Server.FrontendURL, "/")
 	if base == "" {
@@ -267,11 +275,39 @@ func (h *CliHandler) GetLlm(c *gin.Context) {
 		base = "http://localhost:8080"
 	}
 
+	// 聚合用户可见模型：所有 available group 的 models_list_config.models 去重
+	groups, err := h.apiKeySvc.GetAvailableGroups(ctx, subject.UserID)
+	if err != nil {
+		slog.Warn("cli/llm: failed to load available groups; returning empty model list",
+			"user_id", subject.UserID, "err", err)
+	}
+
+	modelSet := make(map[string]struct{})
+	for _, g := range groups {
+		if !g.ModelsListConfig.Enabled {
+			continue
+		}
+		for _, m := range g.ModelsListConfig.Models {
+			m = strings.TrimSpace(m)
+			if m != "" {
+				modelSet[m] = struct{}{}
+			}
+		}
+	}
+
+	models := make([]dto.CliModel, 0, len(modelSet))
+	for id := range modelSet {
+		models = append(models, dto.CliModel{
+			ID:   id,
+			Name: id, // 桌面端展示直接用模型 ID
+		})
+	}
+
 	response.Success(c, dto.CliLlmResponse{
 		BaseURL:          base + "/v1",
 		AnthropicBaseURL: base + "/anthropic/v1",
 		GeminiBaseURL:    base + "/gemini/v1beta",
-		Models:           []dto.CliModel{},
+		Models:           models,
 	})
 }
 

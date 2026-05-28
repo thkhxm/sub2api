@@ -19,7 +19,7 @@ type balanceRequestRepository struct {
 	db *sql.DB
 }
 
-// NewBalanceRequestRepository 构造仓储，返回 service 层接口以简化 wire 绑定（无需 wire.Bind）。
+// NewBalanceRequestRepository 构造仓储，返回 service 层接口（避免 cross-package wire.Bind）。
 func NewBalanceRequestRepository(db *sql.DB) service.BalanceRequestRepository {
 	return &balanceRequestRepository{db: db}
 }
@@ -67,7 +67,7 @@ func scanBalanceRequest(scanner interface {
 	return &r, nil
 }
 
-// Create 插入新的申请单，返回填充了 ID 的实体
+// Create 插入新申请单
 func (r *balanceRequestRepository) Create(ctx context.Context, in *service.BalanceRequest) (*service.BalanceRequest, error) {
 	if in == nil {
 		return nil, errors.New("nil balance request")
@@ -94,7 +94,7 @@ FROM balance_requests WHERE id = $1`
 	return br, err
 }
 
-// ListByUser 用户查看自己的申请列表（最新在前）
+// ListByUser 用户自己的申请列表
 func (r *balanceRequestRepository) ListByUser(ctx context.Context, userID int64, limit int) ([]service.BalanceRequest, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -112,7 +112,7 @@ LIMIT $2`
 	return collectBalanceRequests(rows)
 }
 
-// ListAll 管理员列表，可选按状态过滤
+// ListAll 管理员列表（可按状态过滤 + 分页）
 func (r *balanceRequestRepository) ListAll(ctx context.Context, status string, limit, offset int) ([]service.BalanceRequest, int, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -157,9 +157,20 @@ LIMIT $%d OFFSET $%d`, strings.TrimSpace(balanceRequestColumns), where, len(list
 	return list, total, nil
 }
 
-// UpdateStatus 原子化更新状态（仅在 pending 时允许）。
-// 同时把 reviewer / reviewed_at / approved_amount / reject_reason 一并写入。
-// 返回更新后的行；若状态不再是 pending（被并发修改）返回 ErrBalanceRequestNotPending。
+// CountPendingByUser 统计指定用户的 pending 申请数（防重复提交）
+func (r *balanceRequestRepository) CountPendingByUser(ctx context.Context, userID int64) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM balance_requests WHERE user_id = $1 AND status = 'pending'`,
+		userID,
+	).Scan(&n)
+	return n, err
+}
+
+// UpdateStatus 原子化更新申请状态（仅在 pending 时允许）。
+//
+// 使用 `WHERE status = 'pending'` + `RETURNING` 一句 SQL 完成行锁 + 状态变更，
+// 不需要外层事务（balance 加在 AdminService.UpdateUserBalance 中独立完成）。
 func (r *balanceRequestRepository) UpdateStatus(
 	ctx context.Context,
 	id int64,
@@ -189,85 +200,10 @@ RETURNING ` + strings.TrimSpace(balanceRequestColumns)
 	row := r.db.QueryRowContext(ctx, query, newStatus, reviewerID, now, approvedArg, rejectReason, id)
 	br, err := scanBalanceRequest(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		// 要么 id 不存在，要么 status 不是 pending
-		// 区分一下
-		existing, e := r.GetByID(ctx, id)
-		if errors.Is(e, service.ErrBalanceRequestNotFound) {
+		// 区分 "id 不存在" 与 "已被并发修改不再是 pending"
+		if _, e := r.GetByID(ctx, id); errors.Is(e, service.ErrBalanceRequestNotFound) {
 			return nil, service.ErrBalanceRequestNotFound
 		}
-		if e != nil {
-			return nil, e
-		}
-		_ = existing
-		return nil, service.ErrBalanceRequestNotPending
-	}
-	return br, err
-}
-
-// AddUserBalance 给用户增加余额（事务内）。
-// approve 流程用：在同一事务中 update 申请状态 + 给用户加钱。
-//
-// 注意：本方法独立于 BalanceRequestRepository 主线（用同一个 *sql.DB），
-// 调用方在 service 层负责事务边界（开 tx → 改 balance_request → 改 user → commit）。
-//
-// 这里返回事务以让 service 层组合操作。
-func (r *balanceRequestRepository) BeginTx(ctx context.Context) (*sql.Tx, error) {
-	return r.db.BeginTx(ctx, nil)
-}
-
-// AddUserBalanceTx 在指定事务内给用户加余额
-func (r *balanceRequestRepository) AddUserBalanceTx(ctx context.Context, tx *sql.Tx, userID int64, amount float64) error {
-	if amount <= 0 {
-		return errors.New("amount must be positive")
-	}
-	res, err := tx.ExecContext(ctx,
-		`UPDATE users SET balance = balance + $1, updated_at = NOW() WHERE id = $2`,
-		amount, userID,
-	)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return errors.New("user not found")
-	}
-	return nil
-}
-
-// UpdateStatusTx 在指定事务内更新状态
-func (r *balanceRequestRepository) UpdateStatusTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	id int64,
-	newStatus string,
-	reviewerID int64,
-	approvedAmount *float64,
-	rejectReason string,
-) (*service.BalanceRequest, error) {
-	now := time.Now().UTC()
-	query := `UPDATE balance_requests
-SET status = $1,
-    reviewer_id = $2,
-    reviewed_at = $3,
-    approved_amount_usd = $4,
-    reject_reason = $5,
-    updated_at = $3
-WHERE id = $6 AND status = 'pending'
-RETURNING ` + strings.TrimSpace(balanceRequestColumns)
-
-	var approvedArg any
-	if approvedAmount != nil {
-		approvedArg = *approvedAmount
-	} else {
-		approvedArg = nil
-	}
-
-	row := tx.QueryRowContext(ctx, query, newStatus, reviewerID, now, approvedArg, rejectReason, id)
-	br, err := scanBalanceRequest(row)
-	if errors.Is(err, sql.ErrNoRows) {
 		return nil, service.ErrBalanceRequestNotPending
 	}
 	return br, err

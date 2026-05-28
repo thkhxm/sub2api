@@ -10,6 +10,12 @@
 # =============================================================================
 
 services:
+  # 给 sub2api 注入 PunkcodeAI 专属环境变量（追加，不替换 dev.yml 已有的）
+  sub2api:
+    environment:
+      # /cli/llm 用 cfg.Server.FrontendURL 作为 LLM 网关 base_url 兜底
+      - SERVER_FRONTEND_URL=${SERVER_FRONTEND_URL:-http://localhost:38080}
+
   # 在 sub2api 启动后写入 settings 表，让 PunkcodeAI 桌面端能直接注册
   punkcode-seed:
     image: postgres:18-alpine

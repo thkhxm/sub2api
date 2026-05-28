@@ -252,7 +252,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	availableChannelHandler := handler.NewAvailableChannelHandler(channelService, apiKeyService, settingService)
 	cliHandler := handler.NewCliHandler(configConfig, authService, userService, apiKeyService, usageService, settingService)
 	balanceRequestRepository := repository.NewBalanceRequestRepository(db)
-	balanceRequestService := service.NewBalanceRequestService(balanceRequestRepository)
+	balanceRequestService := service.NewBalanceRequestService(balanceRequestRepository, adminService)
 	balanceRequestHandler := handler.NewBalanceRequestHandler(balanceRequestService)
 	idempotencyCoordinator := service.ProvideIdempotencyCoordinator(idempotencyRepository, configConfig)
 	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)

@@ -388,6 +388,7 @@ export default {
     channelMonitor: 'Channel Monitor',
     channelStatus: 'Channel Status',
     riskControl: 'Risk Control',
+    balanceRequests: 'Balance Requests',
   },
 
   // Auth
@@ -1369,6 +1370,34 @@ export default {
 
   // Admin
   admin: {
+    // PunkcodeAI: balance requests
+    balanceRequests: {
+      title: 'Balance Request Approval',
+      description: 'Review desktop client balance top-up requests',
+      userId: 'User ID',
+      amount: 'Amount',
+      approvedAmountShort: 'Approved',
+      originalAmount: 'Requested',
+      approvedAmount: 'Approved Amount (USD)',
+      approvedAmountHint: 'You can adjust the amount before approving',
+      note: 'Note',
+      status: 'Status',
+      statusAll: 'All',
+      statusPending: 'Pending',
+      statusApproved: 'Approved',
+      statusRejected: 'Rejected',
+      rejectReason: 'Reject Reason',
+      rejectReasonPlaceholder: 'Tell the user why this is rejected (required)',
+      createdAt: 'Created At',
+      reviewedAt: 'Reviewed At',
+      approve: 'Approve',
+      reject: 'Reject',
+      approveTitle: 'Approve & Credit',
+      rejectTitle: 'Reject Request',
+      confirmApprove: 'Confirm Approve',
+      confirmReject: 'Confirm Reject',
+    },
+
     // Dashboard
     dashboard: {
       title: 'Admin Dashboard',
