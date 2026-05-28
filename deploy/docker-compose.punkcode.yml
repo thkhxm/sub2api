@@ -1,0 +1,31 @@
+# =============================================================================
+# PunkcodeAI Dev Override
+# =============================================================================
+# 作为 docker-compose.dev.yml 的 override，添加 PunkcodeAI 专用：
+#   - punkcode-seed：在 sub2api 健康后写入 settings 表，开启注册、关闭邀请码/邮件验证
+#
+# 用法：
+#   docker compose -f docker-compose.dev.yml -f docker-compose.punkcode.yml \
+#     --env-file .env.punkcode up --build
+# =============================================================================
+
+services:
+  # 在 sub2api 启动后写入 settings 表，让 PunkcodeAI 桌面端能直接注册
+  punkcode-seed:
+    image: postgres:18-alpine
+    container_name: punkcode-sub2api-seed
+    depends_on:
+      sub2api:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER:-sub2api}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATABASE: ${POSTGRES_DB:-sub2api}
+    volumes:
+      - ./punkcode-seed.sh:/punkcode-seed.sh:ro
+    entrypoint: ["/bin/sh", "/punkcode-seed.sh"]
+    restart: "no"
+    networks:
+      - sub2api-network
