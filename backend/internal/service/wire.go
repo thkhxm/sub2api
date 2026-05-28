@@ -531,6 +531,9 @@ var ProviderSet = wire.NewSet(
 	ProvideChannelMonitorService,
 	ProvideChannelMonitorRunner,
 	NewChannelMonitorRequestTemplateService,
+
+	// PunkcodeAI: balance request
+	NewBalanceRequestService,
 )
 
 // ProvidePaymentConfigService wraps NewPaymentConfigService to accept the named

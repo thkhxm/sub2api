@@ -61,5 +61,9 @@ func RegisterCliRoutes(
 		cliAuth.GET("/api-key", h.Cli.GetApiKey)
 		cliAuth.GET("/llm", h.Cli.GetLlm)
 		cliAuth.GET("/usage", h.Cli.GetUsage)
+
+		// 余额申请：用户提交 + 自己看自己的列表
+		cliAuth.POST("/balance-requests", h.BalanceRequest.CreateMine)
+		cliAuth.GET("/balance-requests", h.BalanceRequest.ListMine)
 	}
 }

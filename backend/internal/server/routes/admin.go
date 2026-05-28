@@ -97,6 +97,9 @@ func RegisterAdminRoutes(
 
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
+
+		// PunkcodeAI: 余额申请审批
+		registerBalanceRequestAdminRoutes(admin, h)
 	}
 }
 
