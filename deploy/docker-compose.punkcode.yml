@@ -15,10 +15,11 @@ services:
     environment:
       # /cli/llm 用 cfg.Server.FrontendURL 作为 LLM 网关 base_url 兜底
       - SERVER_FRONTEND_URL=${SERVER_FRONTEND_URL:-http://localhost:38080}
-      # PunkcodeAI 桌面端（Electron）renderer 的 Origin 固定为 oc://renderer，
-      # 必须加入 CORS 白名单，否则 fetch 的 OPTIONS 预检会被 sub2api 拒（403）。
-      # dev / prod 打包后 origin 都是 oc://renderer，此值通用。
-      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-oc://renderer}
+      # CORS：桌面端 fetch 不带 cookie credentials（只用 Bearer token），dev 用 '*' 最省事。
+      # 关键：dev 模式 Electron 加载的是 vite dev server（http://localhost:5173/5174，端口会变），
+      #       打包后才是 oc://renderer——两套 origin，dev 用 '*' 一律放行避免端口漂移踩坑。
+      # prod 必须收敛为具体 origin：CORS_ALLOWED_ORIGINS=oc://renderer（见 PUNKCODE_PROD.md）。
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-*}
 
   # 在 sub2api 启动后写入 settings 表，让 PunkcodeAI 桌面端能直接注册
   punkcode-seed:
