@@ -38,7 +38,14 @@ cp .env.punkcode .env.punkcode.prod
 | `JWT_SECRET` | **必须重新生成**（dev 默认值已泄露在仓库里） | `openssl rand -hex 32` |
 | `TOTP_ENCRYPTION_KEY` | **必须重新生成**且**严禁后续轮换**（轮换会让所有已绑 2FA 的用户失效） | `openssl rand -hex 32` |
 | `SERVER_FRONTEND_URL` | `https://punkcodeai.myverse.site` | （硬编码） |
+| `CORS_ALLOWED_ORIGINS` | **必须设为 `oc://renderer`** | （硬编码） |
 | `TZ` | 按机房定（如 `Asia/Shanghai` / `UTC`） | （由你决定） |
+
+> ⚠ **`CORS_ALLOWED_ORIGINS=oc://renderer` 是桌面端能用的硬前提**。PunkcodeAI 桌面端
+> （Electron）renderer 进程的 Origin 固定是 `oc://renderer`，fetch 前会发 OPTIONS 预检；
+> sub2api CORS 白名单不含它就返 403，桌面端注册/登录全部报 "HTTP request failed"。
+> dev 已在 `docker-compose.punkcode.yml` 默认注入；**prod 的 `.env.punkcode.prod` 必须显式带上**。
+> 若将来还要支持 Web 版控制台跨域，用逗号追加：`oc://renderer,https://console.punkcodeai.myverse.site`。
 
 补充字段（按需）：
 
