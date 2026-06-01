@@ -315,8 +315,9 @@ func (h *CliHandler) GetLlm(c *gin.Context) {
 	models := make([]dto.CliModel, 0, len(modelSet))
 	for id := range modelSet {
 		models = append(models, dto.CliModel{
-			ID:   id,
-			Name: id, // 桌面端展示直接用模型 ID
+			ID:            id,
+			Name:          id, // 桌面端展示直接用模型 ID
+			ContextWindow: contextWindowForCliModel(id),
 		})
 	}
 
@@ -326,6 +327,26 @@ func (h *CliHandler) GetLlm(c *gin.Context) {
 		GeminiBaseURL:    base + "/gemini/v1beta",
 		Models:           models,
 	})
+}
+
+// contextWindowForCliModel 返回模型的 context window（token 数），供桌面端做
+// compaction 阈值 / 大文件分析容量判断。
+//
+// codex 上游当前未通过 API 上报 context，这里按模型 ID 给【保守估计值】：
+//   - 之前桌面端 fallback 写死 200k，浪费了 gpt-5.x 系列更大的容量
+//   - 取保守值（不取上游理论峰值）避免误判"能塞更多"导致 context_length_exceeded
+// 如确认实际套餐 context 更大，可上调本表。
+func contextWindowForCliModel(id string) int {
+	switch {
+	case strings.HasPrefix(id, "gpt-5"):
+		return 272000
+	case strings.HasPrefix(id, "gpt-image"):
+		return 0 // 图片生成模型无文本 context 概念
+	case strings.HasPrefix(id, "gpt-4"):
+		return 128000
+	default:
+		return 128000
+	}
 }
 
 // GetUsage GET /api/v1/cli/usage?days=7  (需要 JWT)
