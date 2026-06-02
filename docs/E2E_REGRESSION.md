@@ -20,6 +20,28 @@
 | Windows | 10/11，PowerShell 5.1+ |
 | 测试账号 | u_e2e@punkcode.local，密码 e2e_test_2026 |
 
+## 图片生成 — 生产部署配置要点（重要）
+
+PunkcodeAI 的图片生成走 **imagegen skill（CLI mode）**：桌面端模型调 imagegen skill → bash 跑
+`skills/imagegen/scripts/image_gen.py` → 请求 sub2api `/v1/images/generations`（默认 `gpt-image-2`）
+→ 用上游 codex OAuth 账号内部桥接（`/responses + image_generation`）出图，再转回标准 b64_json。
+生产部署必须确认下列配置，否则图片生成会失败：
+
+| 配置项 | 要求 | 不满足的后果 |
+|---|---|---|
+| **上游账号 `extra.codex_image_generation_bridge`** | **必须为 false / 不开** | 开启会让 `/responses` 注入 `image_generation` hosted tool，桌面端模型被诱导调用它，而 opencode 无此 client tool → 报 `Model tried to call unavailable tool 'image_generation'`，不出图 |
+| 全局 `gateway.codex_image_generation_bridge_enabled` | 保持默认 `false` | 同上 |
+| 上游账号 `credentials.model_mapping` | 含 `gpt-image-2`（imagegen 默认模型），或留空（=放行所有模型） | 缺失 → `/v1/images/generations` 报 `No available compatible accounts` |
+| 分组 `allow_image_generation` | `true` | false → 图片请求 403 `Image generation is not enabled for this group` |
+| 桌面端运行机 | 装 `python3` + `openai` SDK + `pillow`（`pip install openai pillow`） | 缺失 → image_gen.py 无法运行，CLI mode 失败 |
+| 桌面端 skill 资源 | 打包 `electron-builder` extraResources 含 `skills/imagegen`；dev 走绝对路径（index.ts `PUNKCODE_SKILLS_DIR`） | 缺失 → opencode 发现不到 imagegen skill，模型不会画图 |
+
+**关闭 bridge 的操作**（二选一，改后重启 sub2api）：
+- admin 后台：上游账号编辑页关闭「图片生成桥接」开关
+- 或 db：`UPDATE accounts SET extra = jsonb_set(extra, '{codex_image_generation_bridge}', 'false') WHERE id=<上游账号id>;`
+
+> **历史背景**：早期方案用 `codex_image_generation_bridge` 走 `/responses + image_generation` hosted tool 出图，但 opencode 编程 agent 的强 system prompt 下模型不稳定主动调用该 hosted tool，且 opencode 的 client-tool 框架不认 hosted tool（调用即报 unavailable）。最终改用 imagegen skill 的 CLI mode（`image_gen.py` → `/v1/images/generations`），bridge 因此**必须关闭**以免在工具列表里干扰模型。
+
 ## 回归表
 
 | # | 阶段 | 步骤 | 期望结果 | 验证手段 | 状态 |
