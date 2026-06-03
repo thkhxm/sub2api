@@ -561,15 +561,14 @@ func ProvideBalanceNotifyService(emailService *EmailService, settingRepo Setting
 }
 
 // ProvideAccountReauthService creates AccountReauthService for member self-service re-authorization.
-// 注意：runtimeBlocker（AccountRuntimeBlocker = OpenAIGatewayService）通过 setter 在装配末尾注入，
-// 不放进构造参数，以打破 reauth→runtimeBlocker→rateLimit→revokeNotifier→reauth 的依赖环。
 func ProvideAccountReauthService(
 	accountRepo AccountRepository,
 	settingRepo SettingRepository,
 	openaiOAuthService *OpenAIOAuthService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	reauthCache AccountReauthCache,
 ) *AccountReauthService {
-	return NewAccountReauthService(accountRepo, settingRepo, openaiOAuthService, tokenCacheInvalidator)
+	return NewAccountReauthService(accountRepo, settingRepo, openaiOAuthService, tokenCacheInvalidator, reauthCache)
 }
 
 // ProvideAccountRevokeNotifier creates the default AccountRevokeNotifier implementation
@@ -579,8 +578,9 @@ func ProvideAccountRevokeNotifier(
 	notificationEmailService *NotificationEmailService,
 	imWebhookNotifier *IMWebhookNotifier,
 	reauthService *AccountReauthService,
+	reauthCache AccountReauthCache,
 ) AccountRevokeNotifier {
-	return NewAccountRevokeNotifier(settingRepo, notificationEmailService, imWebhookNotifier, reauthService)
+	return NewAccountRevokeNotifier(settingRepo, notificationEmailService, imWebhookNotifier, reauthService, reauthCache)
 }
 
 // ProvidePaymentService creates PaymentService and attaches notification email delivery.

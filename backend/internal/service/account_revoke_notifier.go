@@ -34,6 +34,8 @@ type AccountRevokeNotifierImpl struct {
 	notificationEmailService *NotificationEmailService
 	imWebhookNotifier        *IMWebhookNotifier
 	reauthService            *AccountReauthService
+	// reauthCache 可选 Redis 缓存（带 TTL）。为 nil 时退回 settingRepo（无 TTL）方案。
+	reauthCache AccountReauthCache
 }
 
 // NewAccountRevokeNotifier 创建 revoke 告警通知器。
@@ -42,12 +44,14 @@ func NewAccountRevokeNotifier(
 	notificationEmailService *NotificationEmailService,
 	imWebhookNotifier *IMWebhookNotifier,
 	reauthService *AccountReauthService,
+	reauthCache AccountReauthCache,
 ) *AccountRevokeNotifierImpl {
 	return &AccountRevokeNotifierImpl{
 		settingRepo:              settingRepo,
 		notificationEmailService: notificationEmailService,
 		imWebhookNotifier:        imWebhookNotifier,
 		reauthService:            reauthService,
+		reauthCache:              reauthCache,
 	}
 }
 
@@ -76,7 +80,8 @@ func (n *AccountRevokeNotifierImpl) dispatch(accountID int64, accountName, platf
 
 	// 去重：同一账号在 TTL 窗口内只告警一次。
 	deliveryKey := accountRevokeNotifyDeliveryPrefix + strconv.FormatInt(accountID, 10)
-	if n.alreadyNotified(ctx, deliveryKey) {
+	dedupeTTL := time.Duration(n.notifyTTLHours(ctx)) * time.Hour
+	if n.alreadyNotified(ctx, deliveryKey, dedupeTTL) {
 		return
 	}
 
@@ -102,7 +107,7 @@ func (n *AccountRevokeNotifierImpl) dispatch(accountID int64, accountName, platf
 	n.sendIMWebhook(ctx, accountName, platform, displayOwnerName, reason, reauthURL, triggeredAt)
 
 	// 标记已告警（去重窗口）。
-	n.markNotified(ctx, deliveryKey)
+	n.markNotified(ctx, deliveryKey, dedupeTTL)
 }
 
 func (n *AccountRevokeNotifierImpl) sendReauthEmail(ctx context.Context, to, accountName, platform, ownerName, reason, reauthURL, triggeredAt string) {
@@ -197,7 +202,24 @@ func (n *AccountRevokeNotifierImpl) resolveEmailRecipients(ctx context.Context, 
 	return recipients
 }
 
-func (n *AccountRevokeNotifierImpl) alreadyNotified(ctx context.Context, key string) bool {
+// alreadyNotified 判断某账号是否在去重窗口内已告警。
+//
+// P2-3：优先用 Redis（key 带去重窗口 TTL，自动过期清理，避免 settings 无限增长）。
+// 去重是「锦上添花」而非安全关键，故 Redis 故障时 fail-open（当作未告警，宁可重发也不漏发）。
+func (n *AccountRevokeNotifierImpl) alreadyNotified(ctx context.Context, key string, ttl time.Duration) bool {
+	if n.reauthCache != nil {
+		notified, err := n.reauthCache.IsNotified(ctx, key)
+		if err == nil {
+			return notified
+		}
+		// Redis 故障：fail-open。
+		slog.Warn("account_revoke_notify_dedupe_redis_failed", "error", err)
+		return false
+	}
+	return n.alreadyNotifiedFromSettings(ctx, key, ttl)
+}
+
+func (n *AccountRevokeNotifierImpl) alreadyNotifiedFromSettings(ctx context.Context, key string, ttl time.Duration) bool {
 	if n.settingRepo == nil {
 		return false
 	}
@@ -214,11 +236,18 @@ func (n *AccountRevokeNotifierImpl) alreadyNotified(ctx context.Context, key str
 	if parseErr != nil {
 		return false
 	}
-	ttl := time.Duration(n.notifyTTLHours(ctx)) * time.Hour
 	return time.Since(last) < ttl
 }
 
-func (n *AccountRevokeNotifierImpl) markNotified(ctx context.Context, key string) {
+func (n *AccountRevokeNotifierImpl) markNotified(ctx context.Context, key string, ttl time.Duration) {
+	if n.reauthCache != nil {
+		if err := n.reauthCache.MarkNotified(ctx, key, ttl); err == nil {
+			return
+		} else {
+			slog.Warn("account_revoke_notify_mark_redis_failed", "error", err)
+			// 回退写 settings。
+		}
+	}
 	if n.settingRepo == nil {
 		return
 	}

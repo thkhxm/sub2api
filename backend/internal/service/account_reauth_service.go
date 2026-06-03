@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -35,7 +36,32 @@ const (
 	accountReauthTokenTTL = 24 * time.Hour
 	// accountReauthConsumedKeyPrefix 一次性消费标记的 settings key 前缀。
 	accountReauthConsumedKeyPrefix = "account_reauth_consumed:"
+	// accountReauthSecretLockTTL secret 首次生成的分布式锁有效期，防并发各自 rand 后写覆盖先写。
+	accountReauthSecretLockTTL = 10 * time.Second
 )
+
+// AccountReauthCache 抽象重授权流程对 Redis 的依赖，由 repository 层用带 TTL 的 Redis key 实现。
+//
+// 用途：
+//   - AcquireSecretLock：secret 首次生成的 set-if-absent 分布式锁（P2-2 防并发竞态）；
+//   - MarkConsumed/IsConsumed：一次性消费标记，TTL = token TTL（P2-3 防 settings 无限增长）；
+//   - MarkNotified/IsNotified：revoke 告警去重标记，TTL = 去重窗口（P2-3）。
+//
+// 全部方法 nil-safe 由调用方保证（cache 为 nil 时退回 settings 方案）。
+type AccountReauthCache interface {
+	// AcquireSecretLock 尝试获取 secret 首次生成锁，成功返回 true（set-if-absent）。
+	AcquireSecretLock(ctx context.Context, ttl time.Duration) (bool, error)
+	// ReleaseSecretLock 释放 secret 首次生成锁。
+	ReleaseSecretLock(ctx context.Context) error
+	// MarkConsumed 标记 token 已被一次性消费，附 TTL（过期 token 本就拒，无需再记）。
+	MarkConsumed(ctx context.Context, key string, ttl time.Duration) error
+	// IsConsumed 判断 token 是否已被消费。
+	IsConsumed(ctx context.Context, key string) (bool, error)
+	// MarkNotified 标记某 revoke 告警 key 已发送，附去重窗口 TTL。
+	MarkNotified(ctx context.Context, key string, ttl time.Duration) error
+	// IsNotified 判断某 revoke 告警 key 是否在去重窗口内已发送。
+	IsNotified(ctx context.Context, key string) (bool, error)
+}
 
 // AccountReauthService 处理成员自助重授权的签名 token、OAuth 发起与凭证回写。
 type AccountReauthService struct {
@@ -43,6 +69,8 @@ type AccountReauthService struct {
 	settingRepo           SettingRepository
 	openaiOAuthService    *OpenAIOAuthService
 	tokenCacheInvalidator TokenCacheInvalidator
+	// reauthCache 可选 Redis 缓存（带 TTL）。为 nil 时退回 settingRepo（无 TTL）方案，保持向后兼容与单测可用。
+	reauthCache AccountReauthCache
 }
 
 // NewAccountReauthService 创建成员自助重授权服务。
@@ -51,12 +79,14 @@ func NewAccountReauthService(
 	settingRepo SettingRepository,
 	openaiOAuthService *OpenAIOAuthService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	reauthCache AccountReauthCache,
 ) *AccountReauthService {
 	return &AccountReauthService{
 		accountRepo:           accountRepo,
 		settingRepo:           settingRepo,
 		openaiOAuthService:    openaiOAuthService,
 		tokenCacheInvalidator: tokenCacheInvalidator,
+		reauthCache:           reauthCache,
 	}
 }
 
@@ -299,19 +329,60 @@ func (s *AccountReauthService) loadReauthAccount(ctx context.Context, claims acc
 }
 
 // reauthSecret 读取（或首次生成）重授权签名 secret。仿 unsubscribeSecret。
+//
+// P2-2 并发竞态：两个并发请求若都读不到 secret，会各自 rand 生成不同 secret 先后 Set，
+// 后写覆盖先写 → 用先写 secret 签发的 token 验签失败。修复：首次生成走分布式锁（set-if-absent），
+// 持锁者生成并落库，未持锁者短暂重读已落库的 secret。已落库的 secret 永不变更，保持向后兼容。
 func (s *AccountReauthService) reauthSecret(ctx context.Context) (string, error) {
+	if secret, ok, err := s.readSecret(ctx); err != nil {
+		return "", err
+	} else if ok {
+		return secret, nil
+	}
+
+	// 无锁可用（如单测 / Redis 未配）：退回原行为，直接生成并落库。
+	// 此路径仍存在理论竞态，但仅在 Redis 不可用时退化，且 secret 首次生成是极罕见的一次性事件。
+	if s.reauthCache == nil {
+		return s.generateAndStoreSecret(ctx)
+	}
+
+	locked, lockErr := s.reauthCache.AcquireSecretLock(ctx, accountReauthSecretLockTTL)
+	if lockErr != nil || !locked {
+		// 未拿到锁（他人正在生成）或加锁失败：重读已落库 secret；读到即用。
+		if secret, ok, err := s.readSecret(ctx); err == nil && ok {
+			return secret, nil
+		}
+		// 仍读不到且加锁失败：只能直接生成（退化路径，避免完全卡死）。
+		return s.generateAndStoreSecret(ctx)
+	}
+	defer func() { _ = s.reauthCache.ReleaseSecretLock(ctx) }()
+
+	// 持锁后再读一次：可能在等锁期间已被他人写入（double-check）。
+	if secret, ok, err := s.readSecret(ctx); err == nil && ok {
+		return secret, nil
+	}
+	return s.generateAndStoreSecret(ctx)
+}
+
+// readSecret 读取已落库的 secret。返回 (secret, 是否存在, error)。
+func (s *AccountReauthService) readSecret(ctx context.Context) (string, bool, error) {
 	secret, err := s.settingRepo.GetValue(ctx, SettingKeyAccountReauthSecret)
 	if err == nil && strings.TrimSpace(secret) != "" {
-		return strings.TrimSpace(secret), nil
+		return strings.TrimSpace(secret), true, nil
 	}
 	if err != nil && !errors.Is(err, ErrSettingNotFound) {
-		return "", err
+		return "", false, err
 	}
+	return "", false, nil
+}
+
+// generateAndStoreSecret 生成新 secret 并落库。
+func (s *AccountReauthService) generateAndStoreSecret(ctx context.Context) (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	secret = base64.RawURLEncoding.EncodeToString(buf)
+	secret := base64.RawURLEncoding.EncodeToString(buf)
 	if err := s.settingRepo.Set(ctx, SettingKeyAccountReauthSecret, secret); err != nil {
 		return "", err
 	}
@@ -325,11 +396,37 @@ func (s *AccountReauthService) consumedKey(claims accountReauthClaims) string {
 	return accountReauthConsumedKeyPrefix + base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
+// isConsumed 判断 token 是否已被一次性消费。
+//
+// P2-3：优先用 Redis（带 TTL，避免 settings 无限增长）；TTL = token TTL（24h），
+// 过期 token 在 ParseReauthToken 中已先行被拒，无需再保留 consumed 标记。
+//
+// fail-close 安全策略：consumed 检查是防重放的关键，Redis 故障时绝不能让重放绕过。
+// 故 Redis 读失败时降级到 settings 复查（settings 是历史落库的兜底真相源）；
+// settings 读失败则向上抛错，由 ParseReauthToken 拒绝该 token。
 func (s *AccountReauthService) isConsumed(ctx context.Context, claims accountReauthClaims) (bool, error) {
+	key := s.consumedKey(claims)
+	if s.reauthCache != nil {
+		consumed, err := s.reauthCache.IsConsumed(ctx, key)
+		if err == nil {
+			if consumed {
+				return true, nil
+			}
+			// Redis 未命中：仍需复查 settings，覆盖「旧版无 Redis 时落库的 consumed」与「新写入 Redis 失败回退 settings」两种历史数据。
+			return s.isConsumedFromSettings(ctx, key)
+		}
+		// Redis 故障：fail-close，降级到 settings 复查，不让重放绕过。
+		slog.Warn("account_reauth_consumed_redis_failed", "error", err)
+		return s.isConsumedFromSettings(ctx, key)
+	}
+	return s.isConsumedFromSettings(ctx, key)
+}
+
+func (s *AccountReauthService) isConsumedFromSettings(ctx context.Context, key string) (bool, error) {
 	if s.settingRepo == nil {
 		return false, nil
 	}
-	_, err := s.settingRepo.GetValue(ctx, s.consumedKey(claims))
+	_, err := s.settingRepo.GetValue(ctx, key)
 	if err == nil {
 		return true, nil
 	}
@@ -339,11 +436,24 @@ func (s *AccountReauthService) isConsumed(ctx context.Context, claims accountRea
 	return false, err
 }
 
+// markConsumed 标记 token 已被消费。
+//
+// P2-3：优先写 Redis（带 token TTL，自动过期清理）；Redis 写失败时回退写 settings，
+// 保证消费标记不丢（防重放），代价是该条 settings 无 TTL（罕见的故障退化路径，可接受）。
 func (s *AccountReauthService) markConsumed(ctx context.Context, claims accountReauthClaims) error {
+	key := s.consumedKey(claims)
+	if s.reauthCache != nil {
+		if err := s.reauthCache.MarkConsumed(ctx, key, accountReauthTokenTTL); err == nil {
+			return nil
+		} else {
+			slog.Warn("account_reauth_mark_consumed_redis_failed", "error", err)
+			// 回退写 settings，确保消费标记不丢。
+		}
+	}
 	if s.settingRepo == nil {
 		return nil
 	}
-	return s.settingRepo.Set(ctx, s.consumedKey(claims), time.Now().UTC().Format(time.RFC3339Nano))
+	return s.settingRepo.Set(ctx, key, time.Now().UTC().Format(time.RFC3339Nano))
 }
 
 // mergeReauthCredentials 把新凭证合并到旧凭证之上。

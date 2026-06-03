@@ -138,8 +138,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	notificationEmailService := service.NewNotificationEmailService(settingRepository, emailService)
 	// 账号 revoke 自动告警 + 成员自助重授权：notifier 需在 rateLimitService 之前构造并注入。
 	imWebhookNotifier := service.NewIMWebhookNotifier(settingRepository)
-	accountReauthService := service.ProvideAccountReauthService(accountRepository, settingRepository, openAIOAuthService, compositeTokenCacheInvalidator)
-	accountRevokeNotifier := service.ProvideAccountRevokeNotifier(settingRepository, notificationEmailService, imWebhookNotifier, accountReauthService)
+	accountReauthCache := repository.NewAccountReauthCache(redisClient)
+	accountReauthService := service.ProvideAccountReauthService(accountRepository, settingRepository, openAIOAuthService, compositeTokenCacheInvalidator, accountReauthCache)
+	accountRevokeNotifier := service.ProvideAccountRevokeNotifier(settingRepository, notificationEmailService, imWebhookNotifier, accountReauthService, accountReauthCache)
 	rateLimitService := service.ProvideRateLimitService(accountRepository, usageLogRepository, configConfig, geminiQuotaService, tempUnschedCache, timeoutCounterCache, openAI403CounterCache, settingService, compositeTokenCacheInvalidator, accountRevokeNotifier)
 	httpUpstream := repository.NewHTTPUpstream(configConfig)
 	deferredService := service.ProvideDeferredService(accountRepository, timingWheelService)
