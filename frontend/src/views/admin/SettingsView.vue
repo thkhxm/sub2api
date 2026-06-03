@@ -6574,13 +6574,19 @@
         </div>
         <!-- /Tab: Email -->
 
+        <!-- Tab: IM Webhook 通知 -->
+        <div v-show="activeTab === 'imWebhook'" class="space-y-6">
+          <ImWebhookConfigCard />
+        </div>
+        <!-- /Tab: IM Webhook -->
+
         <!-- Tab: Backup -->
         <div v-show="activeTab === 'backup'">
           <BackupSettings />
         </div>
 
-        <!-- Save Button -->
-        <div v-show="activeTab !== 'backup'" class="flex justify-end">
+        <!-- Save Button (IM Webhook 与 Backup 标签页有各自独立的保存逻辑，不显示全局保存按钮) -->
+        <div v-show="activeTab !== 'backup' && activeTab !== 'imWebhook'" class="flex justify-end">
           <button
             type="submit"
             :disabled="saving || loadFailed"
@@ -6697,6 +6703,7 @@ import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
+import ImWebhookConfigCard from "@/components/admin/settings/ImWebhookConfigCard.vue";
 import { useClipboard } from "@/composables/useClipboard";
 import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSimpleUser } from "@/api/admin/affiliates";
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
@@ -6740,6 +6747,7 @@ type SettingsTab =
   | "gateway"
   | "payment"
   | "email"
+  | "imWebhook"
   | "backup";
 const activeTab = ref<SettingsTab>("general");
 const settingsTabs = [
@@ -6751,6 +6759,7 @@ const settingsTabs = [
   { key: "gateway" as SettingsTab, icon: "server" as const },
   { key: "payment" as SettingsTab, icon: "creditCard" as const },
   { key: "email" as SettingsTab, icon: "mail" as const },
+  { key: "imWebhook" as SettingsTab, icon: "bell" as const },
   { key: "backup" as SettingsTab, icon: "database" as const },
 ];
 

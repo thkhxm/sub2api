@@ -32,6 +32,7 @@ import adminPaymentAPI from './payment'
 import affiliatesAPI from './affiliates'
 import riskControlAPI from './riskControl'
 import balanceRequestsAPI from './balanceRequests'
+import imWebhookAPI from './imWebhook'
 
 /**
  * Unified admin API object for convenient access
@@ -65,7 +66,8 @@ export const adminAPI = {
   payment: adminPaymentAPI,
   affiliates: affiliatesAPI,
   riskControl: riskControlAPI,
-  balanceRequests: balanceRequestsAPI
+  balanceRequests: balanceRequestsAPI,
+  imWebhook: imWebhookAPI
 }
 
 export {
@@ -96,7 +98,9 @@ export {
   channelMonitorTemplateAPI,
   adminPaymentAPI,
   affiliatesAPI,
-  riskControlAPI
+  riskControlAPI,
+  balanceRequestsAPI,
+  imWebhookAPI
 }
 
 export default adminAPI
@@ -107,3 +111,10 @@ export type { ErrorPassthroughRule, CreateRuleRequest, UpdateRuleRequest } from 
 export type { BackupAgentHealth, DataManagementConfig } from './dataManagement'
 export type { TLSFingerprintProfile, CreateProfileRequest, UpdateProfileRequest } from './tlsFingerprintProfile'
 export type { ContentModerationConfig, ContentModerationLog, ModerationMode } from './riskControl'
+export type {
+  ImWebhookConfig,
+  ImWebhookChannel,
+  ImWebhookChannelType,
+  ImWebhookTestRequest,
+  ImWebhookTestResult
+} from './imWebhook'
