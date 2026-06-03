@@ -137,3 +137,10 @@ docs/*
 frontend/coverage/
 aicodex
 output/
+
+# codex 系统 skills 目录默认不入库（banner-design/brand/doc/... 桌面端用不到，纯噪音）；
+# 仅 imagegen 是 PunkcodeAI 桌面端图片生成依赖，用 `git add -f skills/imagegen` 强制完整纳入。
+# 注意：上面第 121 行的全局 `scripts` 规则会误伤 imagegen 的 scripts/image_gen.py，
+# 故 imagegen 必须用 -f 强制 add（tracked 后不再受 .gitignore 影响）。
+skills/
+*.rar
