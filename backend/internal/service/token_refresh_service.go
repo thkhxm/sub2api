@@ -28,6 +28,7 @@ type TokenRefreshService struct {
 	tempUnschedCache TempUnschedCache // 用于清除 Redis 中的临时不可调度缓存
 	refreshAPI       *OAuthRefreshAPI // 统一刷新 API
 	runtimeBlocker   AccountRuntimeBlocker
+	revokeNotifier   AccountRevokeNotifier // 账号 revoke 自动告警（可选）
 
 	// OpenAI privacy: 刷新成功后检查并设置 training opt-out
 	privacyClientFactory PrivacyClientFactory
@@ -103,6 +104,18 @@ func (s *TokenRefreshService) SetRefreshPolicy(policy BackgroundRefreshPolicy) {
 
 func (s *TokenRefreshService) SetAccountRuntimeBlocker(blocker AccountRuntimeBlocker) {
 	s.runtimeBlocker = blocker
+}
+
+// SetRevokeNotifier 设置账号 revoke 自动告警通知器（可选依赖，nil-safe）。
+func (s *TokenRefreshService) SetRevokeNotifier(notifier AccountRevokeNotifier) {
+	s.revokeNotifier = notifier
+}
+
+func (s *TokenRefreshService) notifyAccountRevoked(account *Account, reason string) {
+	if s == nil || s.revokeNotifier == nil || account == nil {
+		return
+	}
+	s.revokeNotifier.OnAccountRevoked(account, reason)
 }
 
 func (s *TokenRefreshService) notifyAccountSchedulingBlocked(account *Account, until time.Time, reason string) {
@@ -309,6 +322,9 @@ func (s *TokenRefreshService) refreshWithRetry(ctx context.Context, account *Acc
 					"account_id", account.ID,
 					"error", setErr,
 				)
+			} else {
+				// 不可重试刷新失败（invalid_grant 等）= 账号授权失效，触发自助重授权告警。
+				s.notifyAccountRevoked(account, errorMsg)
 			}
 			// 刷新失败但 access_token 可能仍有效，尝试设置隐私
 			s.ensureOpenAIPrivacy(ctx, account)

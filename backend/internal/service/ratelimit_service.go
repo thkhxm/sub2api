@@ -29,6 +29,7 @@ type RateLimitService struct {
 	settingService        *SettingService
 	tokenCacheInvalidator TokenCacheInvalidator
 	runtimeBlocker        AccountRuntimeBlocker
+	revokeNotifier        AccountRevokeNotifier
 	usageCacheMu          sync.RWMutex
 	usageCache            map[int64]*geminiUsageCacheEntry
 }
@@ -106,6 +107,19 @@ func (s *RateLimitService) SetTokenCacheInvalidator(invalidator TokenCacheInvali
 
 func (s *RateLimitService) SetAccountRuntimeBlocker(blocker AccountRuntimeBlocker) {
 	s.runtimeBlocker = blocker
+}
+
+// SetRevokeNotifier 设置账号 revoke 自动告警通知器（可选依赖，nil-safe）。
+func (s *RateLimitService) SetRevokeNotifier(notifier AccountRevokeNotifier) {
+	s.revokeNotifier = notifier
+}
+
+// notifyAccountRevoked 在账号被永久禁用（SetError 成功）后触发 revoke 告警（nil-safe）。
+func (s *RateLimitService) notifyAccountRevoked(account *Account, reason string) {
+	if s == nil || s.revokeNotifier == nil || account == nil {
+		return
+	}
+	s.revokeNotifier.OnAccountRevoked(account, reason)
 }
 
 func (s *RateLimitService) notifyAccountSchedulingBlocked(account *Account, until time.Time, reason string) {
@@ -713,6 +727,8 @@ func (s *RateLimitService) handleAuthError(ctx context.Context, account *Account
 		return
 	}
 	slog.Warn("account_disabled_auth_error", "account_id", account.ID, "error", errorMsg)
+	// 账号被永久禁用（含 token_revoked/invalidated、缺 refresh_token、403 等）后触发自助重授权告警。
+	s.notifyAccountRevoked(account, errorMsg)
 }
 
 func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody []byte, fallback string) string {
