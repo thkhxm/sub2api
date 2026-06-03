@@ -6574,8 +6574,8 @@
         </div>
         <!-- /Tab: Email -->
 
-        <!-- Tab: IM Webhook 通知 -->
-        <div v-show="activeTab === 'imWebhook'" class="space-y-6">
+        <!-- Tab: IM Webhook 通知（用 v-if 懒挂载：仅在切到该标签时才加载配置） -->
+        <div v-if="activeTab === 'imWebhook'" class="space-y-6">
           <ImWebhookConfigCard />
         </div>
         <!-- /Tab: IM Webhook -->

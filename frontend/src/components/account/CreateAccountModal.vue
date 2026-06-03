@@ -67,6 +67,46 @@
         <p class="input-hint">{{ t('admin.accounts.notesHint') }}</p>
       </div>
 
+      <!-- Account Owner (写入 extra.owner_*) -->
+      <fieldset class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
+        <legend class="px-1 text-sm font-medium text-gray-700 dark:text-gray-300">
+          {{ t('admin.accounts.owner.title') }}
+        </legend>
+        <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.owner.hint') }}
+        </p>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.owner.email') }}</label>
+            <input
+              v-model="form.owner_email"
+              type="email"
+              class="input"
+              :placeholder="t('admin.accounts.owner.emailPlaceholder')"
+            />
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.owner.name') }}</label>
+            <input
+              v-model="form.owner_name"
+              type="text"
+              class="input"
+              :placeholder="t('admin.accounts.owner.namePlaceholder')"
+            />
+          </div>
+          <div class="sm:col-span-2">
+            <label class="input-label">{{ t('admin.accounts.owner.userId') }}</label>
+            <input
+              v-model.number="form.owner_user_id"
+              type="number"
+              min="1"
+              class="input"
+              :placeholder="t('admin.accounts.owner.userIdPlaceholder')"
+            />
+          </div>
+        </div>
+      </fieldset>
+
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
@@ -3573,8 +3613,33 @@ const form = reactive({
   priority: 1,
   rate_multiplier: 1,
   group_ids: [] as number[],
-  expires_at: null as number | null
+  expires_at: null as number | null,
+  // 账号所有者（写入 extra.owner_*，账号 revoke 时给所有者发重授权链接）
+  owner_email: '',
+  owner_name: '',
+  owner_user_id: null as number | null
 })
+
+/**
+ * 把账号所有者信息合并进 extra（owner_email / owner_name / owner_user_id）。
+ * 仅在填写时写入，避免污染 extra。
+ */
+const applyOwnerToExtra = (
+  extra?: Record<string, unknown>
+): Record<string, unknown> | undefined => {
+  const ownerEmail = form.owner_email.trim()
+  const ownerName = form.owner_name.trim()
+  const ownerUserId = form.owner_user_id
+  const hasOwner = !!ownerEmail || !!ownerName || (ownerUserId != null && ownerUserId > 0)
+  if (!hasOwner) {
+    return extra
+  }
+  const merged: Record<string, unknown> = { ...(extra || {}) }
+  if (ownerEmail) merged.owner_email = ownerEmail
+  if (ownerName) merged.owner_name = ownerName
+  if (ownerUserId != null && ownerUserId > 0) merged.owner_user_id = ownerUserId
+  return merged
+}
 
 // Helper to check if current type needs OAuth flow
 const isOAuthFlow = computed(() => {
@@ -4086,6 +4151,9 @@ const resetForm = () => {
   form.rate_multiplier = 1
   form.group_ids = []
   form.expires_at = null
+  form.owner_email = ''
+  form.owner_name = ''
+  form.owner_user_id = null
   accountCategory.value = 'oauth-based'
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
@@ -4238,6 +4306,8 @@ const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unk
 
 // Helper function to create account with mixed channel warning handling
 const doCreateAccount = async (payload: CreateAccountRequest) => {
+  // 统一注入账号所有者信息（覆盖所有走 doCreateAccount 的创建路径）
+  payload.extra = applyOwnerToExtra(payload.extra)
   const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {
     await submitCreateAccount(payload)
   })
@@ -4700,7 +4770,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         platform: 'openai',
         type: 'oauth',
         credentials,
-        extra,
+        extra: applyOwnerToExtra(extra),
         proxy_id: form.proxy_id,
         concurrency: form.concurrency,
         load_factor: form.load_factor ?? undefined,
@@ -4787,7 +4857,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value,
       credential_extras: Object.keys(credentialExtras).length > 0 ? credentialExtras : undefined,
-      extra,
+      extra: applyOwnerToExtra(extra),
       update_existing: true
     })
 
@@ -4904,7 +4974,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             platform: 'openai',
             type: 'oauth',
             credentials,
-            extra,
+            extra: applyOwnerToExtra(extra),
             proxy_id: form.proxy_id,
             concurrency: form.concurrency,
             load_factor: form.load_factor ?? undefined,
@@ -5002,7 +5072,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           platform: 'antigravity',
           type: 'oauth',
           credentials,
-          extra: {},
+          extra: applyOwnerToExtra({}),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -5343,7 +5413,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           platform: form.platform,
           type: addMethod.value, // Use addMethod as type: 'oauth' or 'setup-token'
           credentials,
-          extra,
+          extra: applyOwnerToExtra(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,

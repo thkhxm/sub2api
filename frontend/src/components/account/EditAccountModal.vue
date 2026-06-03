@@ -26,6 +26,46 @@
         <p class="input-hint">{{ t('admin.accounts.notesHint') }}</p>
       </div>
 
+      <!-- Account Owner (存于 extra.owner_*) -->
+      <fieldset class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
+        <legend class="px-1 text-sm font-medium text-gray-700 dark:text-gray-300">
+          {{ t('admin.accounts.owner.title') }}
+        </legend>
+        <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.owner.hint') }}
+        </p>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.owner.email') }}</label>
+            <input
+              v-model="form.owner_email"
+              type="email"
+              class="input"
+              :placeholder="t('admin.accounts.owner.emailPlaceholder')"
+            />
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.owner.name') }}</label>
+            <input
+              v-model="form.owner_name"
+              type="text"
+              class="input"
+              :placeholder="t('admin.accounts.owner.namePlaceholder')"
+            />
+          </div>
+          <div class="sm:col-span-2">
+            <label class="input-label">{{ t('admin.accounts.owner.userId') }}</label>
+            <input
+              v-model.number="form.owner_user_id"
+              type="number"
+              min="1"
+              class="input"
+              :placeholder="t('admin.accounts.owner.userIdPlaceholder')"
+            />
+          </div>
+        </div>
+      </fieldset>
+
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey'" class="space-y-4">
         <div>
@@ -2634,8 +2674,39 @@ const form = reactive({
   rate_multiplier: 1,
   status: 'active' as 'active' | 'inactive' | 'error',
   group_ids: [] as number[],
-  expires_at: null as number | null
+  expires_at: null as number | null,
+  // 账号所有者（存于 extra.owner_*）
+  owner_email: '',
+  owner_name: '',
+  owner_user_id: null as number | null
 })
+
+/**
+ * 把账号所有者信息合并进 extra：填写则写入，清空则删除对应字段
+ * （编辑场景需要支持「清除所有者」，因此与新建逻辑略有不同）。
+ */
+const applyOwnerToExtra = (extra: Record<string, unknown>): Record<string, unknown> => {
+  const result: Record<string, unknown> = { ...extra }
+  const ownerEmail = form.owner_email.trim()
+  const ownerName = form.owner_name.trim()
+  const ownerUserId = form.owner_user_id
+  if (ownerEmail) {
+    result.owner_email = ownerEmail
+  } else {
+    delete result.owner_email
+  }
+  if (ownerName) {
+    result.owner_name = ownerName
+  } else {
+    delete result.owner_name
+  }
+  if (ownerUserId != null && ownerUserId > 0) {
+    result.owner_user_id = ownerUserId
+  } else {
+    delete result.owner_user_id
+  }
+  return result
+}
 
 const statusOptions = computed(() => {
   const options = [
@@ -2704,6 +2775,20 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     : 'active'
   form.group_ids = newAccount.group_ids || []
   form.expires_at = newAccount.expires_at ?? null
+
+  // Load account owner from extra
+  {
+    const ownerExtra = (newAccount.extra as Record<string, unknown>) || {}
+    form.owner_email = typeof ownerExtra.owner_email === 'string' ? ownerExtra.owner_email : ''
+    form.owner_name = typeof ownerExtra.owner_name === 'string' ? ownerExtra.owner_name : ''
+    const ownerUserId = ownerExtra.owner_user_id
+    form.owner_user_id =
+      typeof ownerUserId === 'number' && ownerUserId > 0
+        ? ownerUserId
+        : typeof ownerUserId === 'string' && ownerUserId.trim() && Number(ownerUserId) > 0
+          ? Number(ownerUserId)
+          : null
+  }
 
   // Load intercept warmup requests setting (applies to all account types)
   const credentials = newAccount.credentials as Record<string, unknown> | undefined
@@ -3934,6 +4019,18 @@ const handleSubmit = async () => {
       // Quota notify config
       writeQuotaNotifyToExtra(newExtra, 'update')
       updatePayload.extra = newExtra
+    }
+
+    // 账号所有者：写入 extra.owner_*，并移除从 form 展开带来的顶层字段
+    delete updatePayload.owner_email
+    delete updatePayload.owner_name
+    delete updatePayload.owner_user_id
+    {
+      const currentExtra =
+        (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) ||
+        {}
+      updatePayload.extra = applyOwnerToExtra(currentExtra)
     }
 
     const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {

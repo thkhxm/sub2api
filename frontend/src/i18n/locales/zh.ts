@@ -4629,6 +4629,16 @@ export default {
       expiresAt: '过期时间',
       notes: '备注',
       notesPlaceholder: '可选备注信息',
+      owner: {
+        title: '所有者',
+        hint: '设置账号所有者后，账号被 revoke 时会向其发送重授权链接（邮件 / IM）。',
+        email: '所有者邮箱',
+        emailPlaceholder: 'owner@example.com',
+        name: '所有者名称',
+        namePlaceholder: '选填，用于通知中的称呼',
+        userId: '所有者用户 ID',
+        userIdPlaceholder: '选填，关联本站用户 ID',
+      },
       status: '状态',
       neverExpires: '永不过期',
       // 状态标签
