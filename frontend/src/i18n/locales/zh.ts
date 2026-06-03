@@ -1372,6 +1372,40 @@ export default {
     selectDateRange: '选择日期范围'
   },
 
+  // 成员自助重授权（公开页）
+  accountReauth: {
+    pageTitle: '账号重授权',
+    loading: '正在加载账号信息…',
+    infoTitle: '账号重授权确认',
+    infoDesc: '该账号的访问凭证已失效，需要你重新授权。请先确认以下信息无误，再开始授权。',
+    fields: {
+      accountName: '账号名称',
+      platform: '平台',
+      owner: '所有者',
+      expiresAt: '链接有效期至'
+    },
+    startButton: '开始重授权',
+    starting: '正在生成授权链接…',
+    verifying: '正在验证…',
+    completeButton: '完成重授权',
+    errorTitle: '无法继续重授权',
+    errorHint: '如有疑问，请联系账号管理员重新发送授权链接。',
+    successTitle: '重授权成功',
+    successDesc: '账号「{name}」已恢复可用，无需其他操作。',
+    successHint: '你可以关闭此页面了。',
+    errors: {
+      generic: '操作失败，请稍后重试。',
+      invalidToken: '授权链接无效，请联系管理员重新发送。',
+      invalidSignature: '授权链接签名校验失败，链接可能已被篡改，请联系管理员重新发送。',
+      invalidPayload: '授权链接内容无效，请联系管理员重新发送。',
+      tokenExpired: '授权链接已过期，请联系管理员重新发送新的链接。',
+      tokenConsumed: '该授权链接已被使用过，每个链接仅可使用一次，请联系管理员重新发送。',
+      platformUnsupported: '该账号所属平台暂不支持自助重授权，请联系管理员处理。',
+      missingCode: '请先粘贴授权回调中的授权码。',
+      missingSession: '授权会话已失效，请返回重新开始。'
+    }
+  },
+
   // Admin
   admin: {
     // PunkcodeAI: 余额申请审批

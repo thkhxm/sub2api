@@ -1368,6 +1368,40 @@ export default {
     selectDateRange: 'Select date range'
   },
 
+  // Member self-service re-authorization (public page)
+  accountReauth: {
+    pageTitle: 'Account Re-authorization',
+    loading: 'Loading account information…',
+    infoTitle: 'Confirm account re-authorization',
+    infoDesc: 'This account\'s access credentials have expired and need to be re-authorized. Please confirm the details below before starting.',
+    fields: {
+      accountName: 'Account name',
+      platform: 'Platform',
+      owner: 'Owner',
+      expiresAt: 'Link valid until'
+    },
+    startButton: 'Start re-authorization',
+    starting: 'Generating authorization link…',
+    verifying: 'Verifying…',
+    completeButton: 'Complete re-authorization',
+    errorTitle: 'Cannot continue re-authorization',
+    errorHint: 'If you have questions, please ask the account administrator to resend the authorization link.',
+    successTitle: 'Re-authorization successful',
+    successDesc: 'Account "{name}" has been restored. No further action is required.',
+    successHint: 'You can now close this page.',
+    errors: {
+      generic: 'Operation failed. Please try again later.',
+      invalidToken: 'The authorization link is invalid. Please ask the administrator to resend it.',
+      invalidSignature: 'Signature verification failed. The link may have been tampered with. Please ask the administrator to resend it.',
+      invalidPayload: 'The authorization link content is invalid. Please ask the administrator to resend it.',
+      tokenExpired: 'The authorization link has expired. Please ask the administrator to send a new one.',
+      tokenConsumed: 'This authorization link has already been used. Each link can only be used once. Please ask the administrator to resend it.',
+      platformUnsupported: 'Self-service re-authorization is not supported for this account\'s platform. Please contact the administrator.',
+      missingCode: 'Please paste the authorization code from the callback first.',
+      missingSession: 'The authorization session has expired. Please go back and start again.'
+    }
+  },
+
   // Admin
   admin: {
     // PunkcodeAI: balance requests
