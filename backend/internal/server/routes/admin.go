@@ -53,6 +53,9 @@ func RegisterAdminRoutes(
 		// 系统设置
 		registerSettingsRoutes(admin, h)
 
+		// 账号 revoke 告警 IM webhook 配置（飞书/企微/Telegram）
+		registerIMWebhookRoutes(admin, h)
+
 		// 数据管理
 		registerDataManagementRoutes(admin, h)
 
@@ -454,6 +457,16 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)
 		adminSettings.POST("/web-search-emulation/test", h.Admin.Setting.TestWebSearchEmulation)
 		adminSettings.POST("/web-search-emulation/reset-usage", h.Admin.Setting.ResetWebSearchUsage)
+	}
+}
+
+// registerIMWebhookRoutes 注册账号 revoke 告警 IM webhook 配置路由（飞书/企微/Telegram）。
+func registerIMWebhookRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	imWebhook := admin.Group("/im-webhook")
+	{
+		imWebhook.GET("/config", h.Admin.IMWebhook.GetConfig)
+		imWebhook.PUT("/config", h.Admin.IMWebhook.UpdateConfig)
+		imWebhook.POST("/test", h.Admin.IMWebhook.SendTest)
 	}
 }
 
