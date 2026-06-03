@@ -43,8 +43,6 @@ type AccountReauthService struct {
 	settingRepo           SettingRepository
 	openaiOAuthService    *OpenAIOAuthService
 	tokenCacheInvalidator TokenCacheInvalidator
-	// revokeNotifier 用于成功重授权后清理 runtime block（可选）。
-	runtimeBlocker AccountRuntimeBlocker
 }
 
 // NewAccountReauthService 创建成员自助重授权服务。
@@ -60,11 +58,6 @@ func NewAccountReauthService(
 		openaiOAuthService:    openaiOAuthService,
 		tokenCacheInvalidator: tokenCacheInvalidator,
 	}
-}
-
-// SetAccountRuntimeBlocker 注入运行时调度封锁器（可选，重授权成功后清理 block）。
-func (s *AccountReauthService) SetAccountRuntimeBlocker(blocker AccountRuntimeBlocker) {
-	s.runtimeBlocker = blocker
 }
 
 // accountReauthClaims 是签名 token 的载荷。
@@ -259,12 +252,9 @@ func (s *AccountReauthService) ExchangeReauthCode(ctx context.Context, token, se
 		_ = err
 	}
 
-	// 清理 error 状态，恢复调度。
+	// 清理 error 状态，恢复调度（下次调度周期会重新评估账号可用性）。
 	if err := s.accountRepo.ClearError(ctx, account.ID); err != nil {
 		return nil, infraerrors.Newf(http.StatusInternalServerError, "REAUTH_CLEAR_ERROR_FAILED", "failed to clear error status: %v", err)
-	}
-	if s.runtimeBlocker != nil {
-		s.runtimeBlocker.ClearAccountSchedulingBlock(account.ID)
 	}
 
 	// 失效 token 缓存，强制下次请求用新凭证。

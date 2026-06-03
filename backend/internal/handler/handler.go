@@ -58,6 +58,7 @@ type Handlers struct {
 	AvailableChannel *AvailableChannelHandler
 	Cli              *CliHandler
 	BalanceRequest   *BalanceRequestHandler
+	AccountReauth    *AccountReauthHandler
 }
 
 // BuildInfo contains build-time information

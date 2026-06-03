@@ -113,6 +113,7 @@ func ProvideHandlers(
 	availableChannelHandler *AvailableChannelHandler,
 	cliHandler *CliHandler,
 	balanceRequestHandler *BalanceRequestHandler,
+	accountReauthHandler *AccountReauthHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 ) *Handlers {
@@ -135,6 +136,7 @@ func ProvideHandlers(
 		AvailableChannel: availableChannelHandler,
 		Cli:              cliHandler,
 		BalanceRequest:   balanceRequestHandler,
+		AccountReauth:    accountReauthHandler,
 	}
 }
 
@@ -158,6 +160,7 @@ var ProviderSet = wire.NewSet(
 	NewAvailableChannelHandler,
 	NewCliHandler,
 	NewBalanceRequestHandler,
+	NewAccountReauthHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

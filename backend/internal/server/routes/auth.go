@@ -217,6 +217,21 @@ func RegisterAuthRoutes(
 		settings.GET("/email-unsubscribe", h.Setting.UnsubscribeNotificationEmail)
 	}
 
+	// 成员自助重授权（公开，无 admin 鉴权；鉴权依赖一次性签名 token）。
+	// 加限流，仿 OAuth 端点（Redis 故障时 fail-close）。
+	accountReauth := v1.Group("/account-reauth")
+	{
+		accountReauth.GET("/info", rateLimiter.LimitWithOptions("account-reauth-info", 30, time.Minute, middleware.RateLimitOptions{
+			FailureMode: middleware.RateLimitFailClose,
+		}), h.AccountReauth.GetInfo)
+		accountReauth.POST("/generate-url", rateLimiter.LimitWithOptions("account-reauth-generate-url", 10, time.Minute, middleware.RateLimitOptions{
+			FailureMode: middleware.RateLimitFailClose,
+		}), h.AccountReauth.GenerateURL)
+		accountReauth.POST("/exchange-code", rateLimiter.LimitWithOptions("account-reauth-exchange-code", 10, time.Minute, middleware.RateLimitOptions{
+			FailureMode: middleware.RateLimitFailClose,
+		}), h.AccountReauth.ExchangeCode)
+	}
+
 	// 需要认证的当前用户信息
 	authenticated := v1.Group("")
 	authenticated.Use(gin.HandlerFunc(jwtAuth))

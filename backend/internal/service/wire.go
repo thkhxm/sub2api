@@ -60,6 +60,7 @@ func ProvideTokenRefreshService(
 	proxyRepo ProxyRepository,
 	refreshAPI *OAuthRefreshAPI,
 	runtimeBlocker AccountRuntimeBlocker,
+	revokeNotifier AccountRevokeNotifier,
 ) *TokenRefreshService {
 	svc := NewTokenRefreshService(accountRepo, oauthService, openaiOAuthService, geminiOAuthService, antigravityOAuthService, cacheInvalidator, schedulerCache, cfg, tempUnschedCache)
 	// 注入 OpenAI privacy opt-out 依赖
@@ -69,6 +70,8 @@ func ProvideTokenRefreshService(
 	// 调用侧显式注入后台刷新策略，避免策略漂移
 	svc.SetRefreshPolicy(DefaultBackgroundRefreshPolicy())
 	svc.SetAccountRuntimeBlocker(runtimeBlocker)
+	// 注入账号 revoke 自动告警通知器（不可重试刷新失败时触发）
+	svc.SetRevokeNotifier(revokeNotifier)
 	svc.Start()
 	return svc
 }
@@ -224,12 +227,15 @@ func ProvideRateLimitService(
 	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	revokeNotifier AccountRevokeNotifier,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	svc.SetTimeoutCounterCache(timeoutCounterCache)
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
+	// 注入账号 revoke 自动告警通知器（handleAuthError SetError 成功后触发）
+	svc.SetRevokeNotifier(revokeNotifier)
 	return svc
 }
 
@@ -534,6 +540,11 @@ var ProviderSet = wire.NewSet(
 
 	// PunkcodeAI: balance request
 	NewBalanceRequestService,
+
+	// 账号 revoke 自动告警 + 成员自助重授权
+	NewIMWebhookNotifier,
+	ProvideAccountReauthService,
+	ProvideAccountRevokeNotifier,
 )
 
 // ProvidePaymentConfigService wraps NewPaymentConfigService to accept the named
@@ -547,6 +558,29 @@ func ProvideBalanceNotifyService(emailService *EmailService, settingRepo Setting
 	svc := NewBalanceNotifyService(emailService, settingRepo, accountRepo)
 	svc.SetNotificationEmailService(notificationEmailService)
 	return svc
+}
+
+// ProvideAccountReauthService creates AccountReauthService for member self-service re-authorization.
+// 注意：runtimeBlocker（AccountRuntimeBlocker = OpenAIGatewayService）通过 setter 在装配末尾注入，
+// 不放进构造参数，以打破 reauth→runtimeBlocker→rateLimit→revokeNotifier→reauth 的依赖环。
+func ProvideAccountReauthService(
+	accountRepo AccountRepository,
+	settingRepo SettingRepository,
+	openaiOAuthService *OpenAIOAuthService,
+	tokenCacheInvalidator TokenCacheInvalidator,
+) *AccountReauthService {
+	return NewAccountReauthService(accountRepo, settingRepo, openaiOAuthService, tokenCacheInvalidator)
+}
+
+// ProvideAccountRevokeNotifier creates the default AccountRevokeNotifier implementation
+// and binds it to the AccountRevokeNotifier interface.
+func ProvideAccountRevokeNotifier(
+	settingRepo SettingRepository,
+	notificationEmailService *NotificationEmailService,
+	imWebhookNotifier *IMWebhookNotifier,
+	reauthService *AccountReauthService,
+) AccountRevokeNotifier {
+	return NewAccountRevokeNotifier(settingRepo, notificationEmailService, imWebhookNotifier, reauthService)
 }
 
 // ProvidePaymentService creates PaymentService and attaches notification email delivery.
