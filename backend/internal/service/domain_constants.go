@@ -446,6 +446,11 @@ const (
 
 	// Web Search Emulation
 	SettingKeyWebSearchEmulationConfig = "web_search_emulation_config" // JSON 配置
+
+	// 账号 revoke 自动告警 + 成员自助重授权
+	SettingKeyIMWebhookConfig         = "im_webhook_config"          // IM webhook 通知渠道配置（JSON）
+	SettingKeyAccountReauthSecret     = "account_reauth_secret"      // 自助重授权签名 token 的 HMAC secret
+	SettingKeyAccountReauthNotifyTTLH = "account_reauth_notify_ttlh" // 同一账号 revoke 告警去重窗口（小时），默认 6
 )
 
 // SettingKeyDefaultPlatformQuotas —— 系统全局：每用户 × 平台日/周/月 USD 上限（JSON）。
