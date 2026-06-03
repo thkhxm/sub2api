@@ -32,6 +32,7 @@ const (
 	NotificationEmailEventContentModerationDisabled   = "content_moderation.account_disabled"
 	NotificationEmailEventOpsAlert                    = "ops.alert"
 	NotificationEmailEventOpsScheduledReport          = "ops.scheduled_report"
+	NotificationEmailEventAccountReauthRequest        = "account.reauth_request"
 
 	notificationEmailTemplateKeyPrefix    = "notification_email_template:"
 	notificationEmailPreferenceKeyPrefix  = "notification_email_preference:"
@@ -887,6 +888,9 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 			"report_start_time":   "2026-05-19 12:00",
 			"report_end_time":     "2026-05-20 12:00",
 			"report_html":         "<h2>日报</h2><p>请求量：1024</p>",
+			"owner_name":          "张三",
+			"revoke_reason":       "Token revoked (401): account authentication permanently revoked",
+			"reauth_url":          "https://example.com/account/reauth?token=preview",
 		}
 	}
 	return map[string]string{
@@ -933,6 +937,9 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 		"report_start_time":   "2026-05-19 12:00",
 		"report_end_time":     "2026-05-20 12:00",
 		"report_html":         "<h2>Daily summary</h2><p>Requests: 1024</p>",
+		"owner_name":          "Alex",
+		"revoke_reason":       "Token revoked (401): account authentication permanently revoked",
+		"reauth_url":          "https://example.com/account/reauth?token=preview",
 	}
 }
 
@@ -949,6 +956,7 @@ var notificationEmailEventOrder = []string{
 	NotificationEmailEventContentModerationDisabled,
 	NotificationEmailEventOpsAlert,
 	NotificationEmailEventOpsScheduledReport,
+	NotificationEmailEventAccountReauthRequest,
 }
 
 var notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
@@ -1052,6 +1060,15 @@ var notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
 		Optional:    false,
 		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
 			"report_name", "report_type", "report_start_time", "report_end_time", "report_html"),
+	},
+	NotificationEmailEventAccountReauthRequest: {
+		Event:       NotificationEmailEventAccountReauthRequest,
+		Label:       "Account re-authorization request",
+		Description: "Sent to the account owner (and admins) when an upstream codex/OpenAI account is revoked and needs re-authorization.",
+		Category:    "admin",
+		Optional:    false,
+		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
+			"account_name", "platform", "owner_name", "revoke_reason", "reauth_url", "triggered_at"),
 	},
 }
 
@@ -1315,6 +1332,40 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 <p><strong>类型</strong>：{{report_type}}</p>
 <p><strong>时间范围</strong>：{{report_start_time}} - {{report_end_time}}</p>
 <div>{{report_html}}</div>`),
+		},
+	},
+	NotificationEmailEventAccountReauthRequest: {
+		notificationEmailDefaultLocale: {
+			Subject: "[{{site_name}}] Action required: re-authorize account {{account_name}}",
+			HTML: notificationEmailCard("#dc2626", "Account re-authorization required", `
+<p>Hello {{owner_name}},</p>
+<p>The upstream account <strong>{{account_name}}</strong> ({{platform}}) has been revoked and can no longer serve requests until it is re-authorized.</p>
+<table style="width:100%;border-collapse:collapse;">
+  <tr><td>Account</td><td>{{account_name}}</td></tr>
+  <tr><td>Platform</td><td>{{platform}}</td></tr>
+  <tr><td>Reason</td><td>{{revoke_reason}}</td></tr>
+  <tr><td>Detected at</td><td>{{triggered_at}}</td></tr>
+</table>
+<p>Click the button below to re-authorize this account. The link is valid for 24 hours and can be used once.</p>
+<p><a class="button" href="{{reauth_url}}">Re-authorize account</a></p>
+<p class="muted">If the button does not work, copy this link into your browser:<br>{{reauth_url}}</p>
+<p class="muted">If you did not expect this, please contact your administrator.</p>`),
+		},
+		notificationEmailLocaleChinese: {
+			Subject: "[{{site_name}}] 需要处理：账号 {{account_name}} 待重新授权",
+			HTML: notificationEmailCard("#dc2626", "账号需要重新授权", `
+<p>{{owner_name}}，您好：</p>
+<p>上游账号 <strong>{{account_name}}</strong>（{{platform}}）的授权已失效（revoke），在重新授权之前将无法继续服务请求。</p>
+<table style="width:100%;border-collapse:collapse;">
+  <tr><td>账号</td><td>{{account_name}}</td></tr>
+  <tr><td>平台</td><td>{{platform}}</td></tr>
+  <tr><td>原因</td><td>{{revoke_reason}}</td></tr>
+  <tr><td>检测时间</td><td>{{triggered_at}}</td></tr>
+</table>
+<p>请点击下方按钮重新授权该账号。链接 24 小时内有效，且仅可使用一次。</p>
+<p><a class="button" href="{{reauth_url}}">重新授权账号</a></p>
+<p class="muted">如果按钮无法点击，请复制以下链接到浏览器中打开：<br>{{reauth_url}}</p>
+<p class="muted">如果这不是您预期的操作，请联系管理员处理。</p>`),
 		},
 	},
 }

@@ -774,6 +774,54 @@ func (a *Account) GetClaudeUserID() string {
 	return ""
 }
 
+// GetOwnerUserID 返回账号归属团队成员的 sub2api 用户 ID（来自 extra.owner_user_id）。
+// 路线乙（一次性签名链接）下成员无需注册 sub2api，此字段可为空。
+// 返回 0 表示未配置归属用户。
+func (a *Account) GetOwnerUserID() int64 {
+	if a == nil || a.Extra == nil {
+		return 0
+	}
+	v, ok := a.Extra["owner_user_id"]
+	if !ok || v == nil {
+		return 0
+	}
+	switch id := v.(type) {
+	case float64:
+		return int64(id)
+	case int64:
+		return id
+	case int:
+		return int64(id)
+	case json.Number:
+		if i, err := id.Int64(); err == nil {
+			return i
+		}
+	case string:
+		if i, err := strconv.ParseInt(strings.TrimSpace(id), 10, 64); err == nil {
+			return i
+		}
+	}
+	return 0
+}
+
+// GetOwnerEmail 返回账号归属团队成员的邮箱（来自 extra.owner_email）。
+// 该邮箱用于 codex 账号 revoke 后向成员发送自助重授权通知。
+func (a *Account) GetOwnerEmail() string {
+	return strings.TrimSpace(a.getExtraString("owner_email"))
+}
+
+// GetOwnerName 返回账号归属团队成员的展示名（来自 extra.owner_name）。
+// 缺省时回退为 owner_email 或账号名。
+func (a *Account) GetOwnerName() string {
+	if name := strings.TrimSpace(a.getExtraString("owner_name")); name != "" {
+		return name
+	}
+	if email := a.GetOwnerEmail(); email != "" {
+		return email
+	}
+	return strings.TrimSpace(a.Name)
+}
+
 // matchAntigravityWildcard 通配符匹配（仅支持末尾 *）
 // 用于 model_mapping 的通配符匹配
 func matchAntigravityWildcard(pattern, str string) bool {
