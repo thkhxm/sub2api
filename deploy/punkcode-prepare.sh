@@ -95,7 +95,10 @@ set_kv "ADMIN_PASSWORD"      "$ADMIN_PASSWORD_VAL"
 set_kv "SERVER_MODE"           "release"
 set_kv "RUN_MODE"              "standard"
 set_kv "SERVER_FRONTEND_URL"   "https://<DOMAIN>"
-set_kv "CORS_ALLOWED_ORIGINS"  "https://<DOMAIN>"
+# CORS 必须是桌面端 Electron renderer 的固定 Origin oc://renderer（不是域名！）。
+# 桌面端跨源 fetch 的 Origin 恒为 oc://renderer，填域名会让 OPTIONS 预检返 403、
+# 注册/登录全部报 "HTTP request failed"。如需 web 控制台跨域，逗号追加：oc://renderer,https://<DOMAIN>
+set_kv "CORS_ALLOWED_ORIGINS"  "oc://renderer"
 # 后端只对内监听 8080（compose 内固定），宿主只绑 127.0.0.1:38080，由 nginx 反代。
 set_kv "BIND_HOST"             "127.0.0.1"
 set_kv "SERVER_PORT"           "38080"
