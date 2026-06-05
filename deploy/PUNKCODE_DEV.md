@@ -108,9 +108,9 @@ rm -rf data postgres_data redis_data
 
 ## Prod 部署（M8 后再做）
 
-prod 域名 `punkcodeai.myverse.site`，部署时改：
+prod 域名 `<DOMAIN>`，部署时改：
 
 1. `.env.punkcode` 中所有 `change_in_prod` 字段重新生成（特别是 `JWT_SECRET` / `TOTP_ENCRYPTION_KEY` / `POSTGRES_PASSWORD`）
 2. `SERVER_MODE=release`
 3. 在 sub2api 前面挂 Caddy（参考 deploy/Caddyfile）做 HTTPS termination
-4. 桌面端构建时把 `PUNKCODE_API_BASE_URL` 注入为 `https://punkcodeai.myverse.site`
+4. 桌面端构建时把 `PUNKCODE_API_BASE_URL` 注入为 `https://<DOMAIN>`

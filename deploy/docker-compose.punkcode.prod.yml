@@ -1,0 +1,254 @@
+# =============================================================================
+# PunkcodeAI 生产 Compose（自包含，不复用 dev.yml）
+# =============================================================================
+# 目标主机：腾讯云 <HOST_IP>，该机已在跑【开源版 sub2api】(project=sub2api-deploy)。
+# 本编排与旧 sub2api 完全隔离——project / 容器名 / 网络 / 卷 / 端口全部错开：
+#
+#   隔离维度        旧 sub2api (绝不能撞)              新 PunkcodeAI (本文件)
+#   ------------    ------------------------------    -----------------------------
+#   project         sub2api-deploy                    punkcode
+#   app 容器        sub2api                           punkcode-sub2api
+#   pg 容器         sub2api-postgres                  punkcode-postgres
+#   redis 容器      sub2api-redis                     punkcode-redis
+#   网络            sub2api-deploy_sub2api-network    punkcode-net
+#   卷              (旧的命名卷)                      punkcode-pgdata / punkcode-redisdata
+#   API 宿主端口    8080                              127.0.0.1:38080 (仅本地，nginx 反代)
+#   pg/redis 端口   (按旧配置)                        不映射宿主，仅 docker 网络内可达
+#   部署目录        (旧目录)                          /opt/punkcode-deploy
+#
+# 用法（在 /opt/punkcode-deploy 下）：
+#   # 1. 先用 punkcode-prepare.sh 生成 .env.punkcode.prod
+#   ./punkcode-prepare.sh
+#   # 2. 拉起（-p 显式指定 project，双保险，避免被目录名覆盖）
+#   docker compose -p punkcode -f docker-compose.punkcode.prod.yml \
+#     --env-file .env.punkcode.prod up -d
+#
+# 注意：本文件不挂载源码、不 build，使用预构建镜像（见 sub2api.image）。
+# =============================================================================
+
+name: punkcode
+
+services:
+  # ===========================================================================
+  # PunkcodeAI 二开版 sub2api 后端
+  # ===========================================================================
+  sub2api:
+    # 占位镜像名。主线按镜像来源调整：
+    #   - 本地 docker save/load 导入：保持 punkcode-sub2api:latest
+    #   - 推 TCR：改成 ccr.ccs.tencentyun.com/<namespace>/punkcode-sub2api:<tag>
+    image: punkcode-sub2api:latest
+    container_name: punkcode-sub2api
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    # 仅绑定到本地回环，由宿主 nginx(宝塔) 反代到 https://<DOMAIN>。
+    # 绝不暴露 0.0.0.0:38080，避免绕过 nginx 直连后端。
+    ports:
+      - "127.0.0.1:38080:8080"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env.punkcode.prod
+    environment:
+      # ---- 自动初始化（Docker 部署必需）----
+      - AUTO_SETUP=true
+
+      # ---- Server（生产：release，绝不 debug）----
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - SERVER_MODE=release
+      - GIN_MODE=release
+      - RUN_MODE=${RUN_MODE:-standard}
+      # /cli/llm 用 cfg.Server.FrontendURL 作为 LLM 网关 base_url 兜底
+      - SERVER_FRONTEND_URL=${SERVER_FRONTEND_URL:-https://<DOMAIN>}
+
+      # ---- 数据库（指向本编排内 punkcode-postgres，服务名 postgres）----
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=${POSTGRES_USER:-punkcode}
+      - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - DATABASE_DBNAME=${POSTGRES_DB:-punkcode}
+      - DATABASE_SSLMODE=disable
+      - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-50}
+      - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-10}
+      - DATABASE_CONN_MAX_LIFETIME_MINUTES=${DATABASE_CONN_MAX_LIFETIME_MINUTES:-30}
+      - DATABASE_CONN_MAX_IDLE_TIME_MINUTES=${DATABASE_CONN_MAX_IDLE_TIME_MINUTES:-5}
+
+      # ---- Redis（指向本编排内 punkcode-redis，服务名 redis）----
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      - REDIS_DB=${REDIS_DB:-0}
+      - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-1024}
+      - REDIS_MIN_IDLE_CONNS=${REDIS_MIN_IDLE_CONNS:-10}
+      - REDIS_ENABLE_TLS=${REDIS_ENABLE_TLS:-false}
+
+      # ---- Admin（首次启动自动创建）----
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@punkcode.local}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+
+      # ---- JWT / TOTP（生产必须用 prepare 脚本生成的随机值）----
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - JWT_EXPIRE_HOUR=${JWT_EXPIRE_HOUR:-24}
+      - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:?TOTP_ENCRYPTION_KEY is required}
+
+      # ---- CORS（生产收敛到具体 origin）----
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-https://<DOMAIN>}
+
+      # ---- 时区 ----
+      - TZ=${TZ:-Asia/Shanghai}
+
+      # ---- 安全：URL 白名单（按 .env 默认，生产建议保守）----
+      - SECURITY_URL_ALLOWLIST_ENABLED=${SECURITY_URL_ALLOWLIST_ENABLED:-false}
+      - SECURITY_URL_ALLOWLIST_ALLOW_INSECURE_HTTP=${SECURITY_URL_ALLOWLIST_ALLOW_INSECURE_HTTP:-false}
+      - SECURITY_URL_ALLOWLIST_ALLOW_PRIVATE_HOSTS=${SECURITY_URL_ALLOWLIST_ALLOW_PRIVATE_HOSTS:-false}
+
+      # ---- 在线更新代理（海外直连留空）----
+      - UPDATE_PROXY_URL=${UPDATE_PROXY_URL:-}
+
+      # ---- Gemini OAuth（可选）----
+      - GEMINI_OAUTH_CLIENT_ID=${GEMINI_OAUTH_CLIENT_ID:-}
+      - GEMINI_OAUTH_CLIENT_SECRET=${GEMINI_OAUTH_CLIENT_SECRET:-}
+      - GEMINI_OAUTH_SCOPES=${GEMINI_OAUTH_SCOPES:-}
+      - GEMINI_QUOTA_POLICY=${GEMINI_QUOTA_POLICY:-}
+      - GEMINI_CLI_OAUTH_CLIENT_SECRET=${GEMINI_CLI_OAUTH_CLIENT_SECRET:-}
+      - ANTIGRAVITY_OAUTH_CLIENT_SECRET=${ANTIGRAVITY_OAUTH_CLIENT_SECRET:-}
+      - ANTIGRAVITY_USER_AGENT_VERSION=${ANTIGRAVITY_USER_AGENT_VERSION:-}
+
+      # ---- OpenAI 上游协议/超时 + 图片生成流式/并发（沿用 dev/prod 默认）----
+      - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-0}
+      - GATEWAY_OPENAI_HTTP2_ENABLED=${GATEWAY_OPENAI_HTTP2_ENABLED:-true}
+      - GATEWAY_OPENAI_HTTP2_ALLOW_PROXY_FALLBACK_TO_HTTP1=${GATEWAY_OPENAI_HTTP2_ALLOW_PROXY_FALLBACK_TO_HTTP1:-true}
+      - GATEWAY_OPENAI_HTTP2_FALLBACK_ERROR_THRESHOLD=${GATEWAY_OPENAI_HTTP2_FALLBACK_ERROR_THRESHOLD:-2}
+      - GATEWAY_OPENAI_HTTP2_FALLBACK_WINDOW_SECONDS=${GATEWAY_OPENAI_HTTP2_FALLBACK_WINDOW_SECONDS:-60}
+      - GATEWAY_OPENAI_HTTP2_FALLBACK_TTL_SECONDS=${GATEWAY_OPENAI_HTTP2_FALLBACK_TTL_SECONDS:-600}
+      - GATEWAY_IMAGE_STREAM_DATA_INTERVAL_TIMEOUT=${GATEWAY_IMAGE_STREAM_DATA_INTERVAL_TIMEOUT:-900}
+      - GATEWAY_IMAGE_STREAM_KEEPALIVE_INTERVAL=${GATEWAY_IMAGE_STREAM_KEEPALIVE_INTERVAL:-10}
+      - GATEWAY_IMAGE_CONCURRENCY_ENABLED=${GATEWAY_IMAGE_CONCURRENCY_ENABLED:-false}
+      - GATEWAY_IMAGE_CONCURRENCY_MAX_CONCURRENT_REQUESTS=${GATEWAY_IMAGE_CONCURRENCY_MAX_CONCURRENT_REQUESTS:-0}
+      - GATEWAY_IMAGE_CONCURRENCY_OVERFLOW_MODE=${GATEWAY_IMAGE_CONCURRENCY_OVERFLOW_MODE:-reject}
+      - GATEWAY_IMAGE_CONCURRENCY_WAIT_TIMEOUT_SECONDS=${GATEWAY_IMAGE_CONCURRENCY_WAIT_TIMEOUT_SECONDS:-30}
+      - GATEWAY_IMAGE_CONCURRENCY_MAX_WAITING_REQUESTS=${GATEWAY_IMAGE_CONCURRENCY_MAX_WAITING_REQUESTS:-100}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - punkcode-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ===========================================================================
+  # PostgreSQL（仅内网，不映射宿主端口）
+  # ===========================================================================
+  postgres:
+    image: postgres:18-alpine
+    container_name: punkcode-postgres
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    volumes:
+      - punkcode-pgdata:/var/lib/postgresql/data
+    environment:
+      # 显式 PGDATA，避免 postgres:18-alpine 默认匿名卷导致数据不落盘到命名卷。
+      - PGDATA=/var/lib/postgresql/data
+      - POSTGRES_USER=${POSTGRES_USER:-punkcode}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - POSTGRES_DB=${POSTGRES_DB:-punkcode}
+      - TZ=${TZ:-Asia/Shanghai}
+    # 仅 expose 给 docker 内网，绝不 ports 映射到宿主（与旧 sub2api-postgres 物理隔离）。
+    expose:
+      - "5432"
+    networks:
+      - punkcode-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-punkcode} -d ${POSTGRES_DB:-punkcode}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ===========================================================================
+  # Redis（仅内网，不映射宿主端口）
+  # ===========================================================================
+  redis:
+    image: redis:8-alpine
+    container_name: punkcode-redis
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    volumes:
+      - punkcode-redisdata:/data
+    command: >
+      sh -c '
+        redis-server
+        --save 60 1
+        --appendonly yes
+        --appendfsync everysec
+        ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}'
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - REDISCLI_AUTH=${REDIS_PASSWORD:-}
+    expose:
+      - "6379"
+    networks:
+      - punkcode-net
+    healthcheck:
+      # 带密码时 redis-cli 通过 REDISCLI_AUTH 环境变量自动鉴权。
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ===========================================================================
+  # 一次性 seed：在 sub2api 健康后往 settings 表写入 PunkcodeAI 桌面端依赖的开关
+  # （registration_enabled=true / email_verify_enabled=false / invitation_code_enabled=false）
+  # 幂等：脚本用 ON CONFLICT DO UPDATE，重复 up 安全。
+  # ===========================================================================
+  punkcode-seed:
+    image: postgres:18-alpine
+    container_name: punkcode-seed
+    depends_on:
+      sub2api:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER:-punkcode}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATABASE: ${POSTGRES_DB:-punkcode}
+    volumes:
+      - ./punkcode-seed.sh:/punkcode-seed.sh:ro
+    entrypoint: ["/bin/sh", "/punkcode-seed.sh"]
+    restart: "no"
+    networks:
+      - punkcode-net
+
+# =============================================================================
+# 网络（独立 bridge，与 sub2api-deploy_sub2api-network 不相通）
+# 实际网络名会带 project 前缀 -> punkcode_punkcode-net
+# =============================================================================
+networks:
+  punkcode-net:
+    driver: bridge
+
+# =============================================================================
+# 卷（独立命名卷，实际名带 project 前缀 -> punkcode_punkcode-pgdata 等）
+# =============================================================================
+volumes:
+  punkcode-pgdata:
+    driver: local
+  punkcode-redisdata:
+    driver: local

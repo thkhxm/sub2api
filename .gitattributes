@@ -18,5 +18,8 @@ backend/migrations/*.sql text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
 
+# nginx / 通用配置文件
+*.conf text eol=lf
+
 # Dockerfile
 Dockerfile text eol=lf

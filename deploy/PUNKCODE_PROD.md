@@ -10,7 +10,7 @@ PunkcodeAI 桌面端的后端是基于 sub2api 改造的网关服务。本文档
 > - `deploy/Caddyfile`
 >
 > 默认假设：
-> - prod 域名 `punkcodeai.myverse.site`
+> - prod 域名 `<DOMAIN>`
 > - prod 服务器是单机 Linux（Ubuntu 22.04+ / Debian 12+），已装 Docker Engine + docker compose v2
 > - 反代用 Caddy（推荐，自动签 Let's Encrypt 证书）或 nginx
 
@@ -37,7 +37,7 @@ cp .env.punkcode .env.punkcode.prod
 | `ADMIN_PASSWORD` | 强密码（≥16 字符，建议密码管理器生成） | （由你决定） |
 | `JWT_SECRET` | **必须重新生成**（dev 默认值已泄露在仓库里） | `openssl rand -hex 32` |
 | `TOTP_ENCRYPTION_KEY` | **必须重新生成**且**严禁后续轮换**（轮换会让所有已绑 2FA 的用户失效） | `openssl rand -hex 32` |
-| `SERVER_FRONTEND_URL` | `https://punkcodeai.myverse.site` | （硬编码） |
+| `SERVER_FRONTEND_URL` | `https://<DOMAIN>` | （硬编码） |
 | `CORS_ALLOWED_ORIGINS` | **必须设为 `oc://renderer`** | （硬编码） |
 | `TZ` | 按机房定（如 `Asia/Shanghai` / `UTC`） | （由你决定） |
 
@@ -45,7 +45,7 @@ cp .env.punkcode .env.punkcode.prod
 > （Electron）renderer 进程的 Origin 固定是 `oc://renderer`，fetch 前会发 OPTIONS 预检；
 > sub2api CORS 白名单不含它就返 403，桌面端注册/登录全部报 "HTTP request failed"。
 > dev 已在 `docker-compose.punkcode.yml` 默认注入；**prod 的 `.env.punkcode.prod` 必须显式带上**。
-> 若将来还要支持 Web 版控制台跨域，用逗号追加：`oc://renderer,https://console.punkcodeai.myverse.site`。
+> 若将来还要支持 Web 版控制台跨域，用逗号追加：`oc://renderer,https://console.<DOMAIN>`。
 
 补充字段（按需）：
 
@@ -69,7 +69,7 @@ JWT_EXPIRE_HOUR=12
 
 ### 2.1 DNS
 
-把 `punkcodeai.myverse.site` 的 A 记录指向 prod 服务器公网 IP。
+把 `<DOMAIN>` 的 A 记录指向 prod 服务器公网 IP。
 
 如果在 Cloudflare 后面：
 - 「Proxy status」推荐**关掉橙云**（防 Caddy 自动签证书踩 Cloudflare 的 challenge 冲突）；或开橙云但用 Cloudflare Origin Certificate + Caddy `tls` 块手动配
@@ -77,10 +77,10 @@ JWT_EXPIRE_HOUR=12
 
 ### 2.2 Caddy（推荐）
 
-`deploy/Caddyfile` 中第 2 行 `api.sub2api.com` 改成 `punkcodeai.myverse.site`：
+`deploy/Caddyfile` 中第 2 行 `api.sub2api.com` 改成 `<DOMAIN>`：
 
 ```caddy
-punkcodeai.myverse.site {
+<DOMAIN> {
     # ... 其余配置直接复用 deploy/Caddyfile 模板
     reverse_proxy localhost:38080 {
         health_uri /health
@@ -107,16 +107,16 @@ Caddy 会自动签 Let's Encrypt 证书 + HTTPS 重定向。
 ```nginx
 server {
     listen 80;
-    server_name punkcodeai.myverse.site;
+    server_name <DOMAIN>;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl http2;
-    server_name punkcodeai.myverse.site;
+    server_name <DOMAIN>;
 
-    ssl_certificate     /etc/letsencrypt/live/punkcodeai.myverse.site/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/punkcodeai.myverse.site/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/<DOMAIN>/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/<DOMAIN>/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
 
     client_max_body_size 100M;
@@ -142,7 +142,7 @@ server {
 }
 ```
 
-证书用 certbot：`sudo certbot certonly --nginx -d punkcodeai.myverse.site`
+证书用 certbot：`sudo certbot certonly --nginx -d <DOMAIN>`
 
 ---
 
@@ -173,7 +173,7 @@ docker compose \
 
 ```bash
 # 健康检查
-curl -fsS https://punkcodeai.myverse.site/health
+curl -fsS https://<DOMAIN>/health
 # 期望：200 {"status":"ok"}
 
 # 检查 settings
@@ -185,7 +185,7 @@ docker exec -it sub2api-postgres psql -U $POSTGRES_USER -d $POSTGRES_DB \
 
 ### 3.3 后续配置
 
-用 admin 账号登录 `https://punkcodeai.myverse.site` 完成：
+用 admin 账号登录 `https://<DOMAIN>` 完成：
 
 1. **录入上游账号**（Account 菜单）：Claude OAuth / OpenAI API Key / Gemini OAuth
 2. **配 Channel**（Channel 菜单）：把上游账号挂到 channel，设置 `restrict_models`（白名单）
@@ -232,7 +232,7 @@ docker logs --tail 200 sub2api-app
 
 接 UptimeRobot / Healthchecks.io：
 
-- Health check URL：`https://punkcodeai.myverse.site/health`
+- Health check URL：`https://<DOMAIN>/health`
 - 期望响应：200，5 秒内
 - 频率：每分钟一次
 
@@ -326,7 +326,7 @@ docker logs -f sub2api-app
 # Ctrl-C 退出 follow
 
 # 6. 验证
-curl -fsS https://punkcodeai.myverse.site/health
+curl -fsS https://<DOMAIN>/health
 ```
 
 > Ent schema migration 是**自动**的（sub2api 启动时跑），不需要手动 `ent migrate`。
