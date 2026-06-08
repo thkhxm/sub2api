@@ -251,6 +251,13 @@ services:
 networks:
   punkcode-net:
     driver: bridge
+    # 固定 subnet/gateway。宿主 UFW 放行的是 172.19.0.0/16 访问 SOCKS 代理端口(7890-7892,
+    # 容器经 host.docker.internal 走宿主代理出网)。不固定的话 docker 重建网络可能分到别的
+    # 网段(如 172.20.x), UFW 规则不再匹配 -> 上游代理连不上 -> 桌面端聊天又 502 超时。
+    ipam:
+      config:
+        - subnet: 172.19.0.0/16
+          gateway: 172.19.0.1
 
 # =============================================================================
 # 卷（独立命名卷，实际名带 project 前缀 -> punkcode_punkcode-pgdata 等）
