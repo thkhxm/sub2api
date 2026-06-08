@@ -138,6 +138,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # 上游账号经宿主上的 SOCKS 代理(sing-box 等, 监听 0.0.0.0:789x)出网。容器通过
+    # host.docker.internal 访问宿主(proxies 表 host 须配为 host.docker.internal)。
+    # host-gateway 让该域名解析到宿主, 不依赖具体 docker 网络网关 IP——避免网络重建后
+    # 网关 IP 变(如 172.18.0.1->172.19.0.1)导致代理连不上、上游转发超时 502。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - punkcode-net
     healthcheck:
