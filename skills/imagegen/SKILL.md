@@ -17,7 +17,7 @@ This deployment runs inside **opencode (PunkcodeAI desktop)**. There is **NO** b
   python "<this skill dir>/scripts/image_gen.py" generate --prompt "<detailed English prompt>" --out "output/imagegen/<name>.png"
   ```
   Credentials are already injected via the `OPENAI_API_KEY` / `OPENAI_BASE_URL` environment variables — **do NOT configure anything, do NOT ask the user, do NOT pre-flight or dry-run; just run the command.** Default model `gpt-image-2` works out of the box.
-- After the script prints `Wrote <path>`, **use the `read` tool to read that PNG** so the generated image is shown to the user inline.
+- **MANDATORY FINAL STEP (do NOT skip):** after the script prints `Wrote <path>`, you **MUST** immediately call the `read` tool on that PNG using the **absolute path** from the `Wrote` line (if it is relative, resolve it to an absolute path first). This is the canonical way the generated image is shown to the user inline — skipping it means the user sees only a path string and the task is INCOMPLETE. Before reporting back, self-check: "Did I call `read` on the generated image?" (The PunkcodeAI desktop host also has an automatic fallback that inlines `Wrote <path>` images, but you must still `read` so the image enters the conversation context.)
 - Generation takes ~60–90s (this is normal for gpt-image-2); wait for the script to finish, do not assume it hung.
 - Everything below about "built-in tool mode" / the built-in `image_gen` tool **does NOT apply here** — only the CLI-mode parts (`scripts/image_gen.py`) and the `references/` prompt guidance are relevant.
 
@@ -134,6 +134,7 @@ Assume the user wants a new image unless they clearly ask to change an existing 
 16. For batches or multi-asset requests, persist every requested deliverable final in the workspace unless the user explicitly asked to keep outputs preview-only. Discarded variants do not need to be kept unless requested.
 17. If the user explicitly chooses or confirms the CLI fallback, then use the fallback-only docs for model, quality, size, `input_fidelity`, masks, output format, output paths, and network setup.
 18. Always report the final saved path(s) for any workspace-bound asset(s), plus the final prompt or prompt set and whether the built-in tool or fallback CLI mode was used.
+19. **CLI-mode finalization (MANDATORY):** after `scripts/image_gen.py` prints `Wrote <path>`, immediately `read` each generated PNG (by absolute path) so the image renders inline for the user. Do not finish the turn having reported only the path text. Self-check before replying: every generated image must have been `read`.
 
 ## Transparent image requests
 
