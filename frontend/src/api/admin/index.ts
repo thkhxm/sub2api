@@ -33,6 +33,7 @@ import affiliatesAPI from './affiliates'
 import riskControlAPI from './riskControl'
 import balanceRequestsAPI from './balanceRequests'
 import imWebhookAPI from './imWebhook'
+import adminComplianceAPI from './compliance'
 
 /**
  * Unified admin API object for convenient access
@@ -67,7 +68,8 @@ export const adminAPI = {
   affiliates: affiliatesAPI,
   riskControl: riskControlAPI,
   balanceRequests: balanceRequestsAPI,
-  imWebhook: imWebhookAPI
+  imWebhook: imWebhookAPI,
+  compliance: adminComplianceAPI
 }
 
 export {
@@ -100,7 +102,8 @@ export {
   affiliatesAPI,
   riskControlAPI,
   balanceRequestsAPI,
-  imWebhookAPI
+  imWebhookAPI,
+  adminComplianceAPI
 }
 
 export default adminAPI
