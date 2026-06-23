@@ -23,8 +23,8 @@ fi
 command -v gitlab-runner >/dev/null 2>&1 || brew install gitlab-runner
 command -v git >/dev/null 2>&1 || brew install git
 if ! command -v bun >/dev/null 2>&1; then
-  curl -fsSL https://bun.sh/install | bash
-  export PATH="$HOME/.bun/bin:$PATH"
+  # 优先用 Homebrew 装 bun（国内比直连 GitHub release 下载稳）；失败再退回官方安装脚本。
+  brew install bun || { curl -fsSL https://bun.sh/install | bash; export PATH="$HOME/.bun/bin:$PATH"; }
 fi
 # codesign（未签名 mac 包要做 ad-hoc 签名才能在 Apple Silicon 启动）需要 Xcode 命令行工具
 xcode-select -p >/dev/null 2>&1 || xcode-select --install || true
