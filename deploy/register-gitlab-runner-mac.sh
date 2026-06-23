@@ -29,7 +29,14 @@ fi
 # codesign（未签名 mac 包要做 ad-hoc 签名才能在 Apple Silicon 启动）需要 Xcode 命令行工具
 xcode-select -p >/dev/null 2>&1 || xcode-select --install || true
 
-echo "[2/4] 注册 runner（shell executor）"
+# 让"注册这一下"直连内网 GitLab、不被本机代理(科学上网)带去公网 CDN，否则 TLS 校验失败
+# （报错形如 cert valid for *.cdn.myqcloud.com ... not git.myverse.fans）。
+# 注意：daemon 长期轮询不继承这里的 env——真正一劳永逸要在代理(Clash 等)里给该域名/内网网段配 DIRECT。
+GL_HOST="$(printf '%s' "$URL" | sed -E 's#^https?://##; s#[:/].*$##')"
+export no_proxy="${GL_HOST},localhost,127.0.0.1,::1"
+export NO_PROXY="$no_proxy"
+
+echo "[2/4] 注册 runner（shell executor），no_proxy=$no_proxy"
 gitlab-runner register --non-interactive \
   --url "$URL" --token "$TOKEN" \
   --executor shell --description "punkcode-mac-arm64"

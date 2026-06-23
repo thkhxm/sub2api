@@ -31,6 +31,11 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 }
 
 Write-Output "[3/5] 注册 runner（shell executor）"
+# 让注册这一下直连内网 GitLab、不被本机代理带去公网 CDN（否则 TLS 校验失败）。
+# 注意：daemon 长期轮询不继承这里的 env——一劳永逸要在代理里给该域名/内网网段配 DIRECT。
+$glHost = ([uri]$Url).Host
+$env:no_proxy = "$glHost,localhost,127.0.0.1"
+$env:NO_PROXY = $env:no_proxy
 & $exe register --non-interactive --url $Url --token $Token --executor shell --description "punkcode-win-x64"
 
 Write-Output "[4/5] 安装并启动服务"
