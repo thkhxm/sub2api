@@ -30,11 +30,18 @@ param(
 $ErrorActionPreference = "Stop"
 
 # prod channel publishes flat into /updates; dev/beta would use /updates/dev , /updates/beta.
-$files = @("latest.yml", "PunkcodeAI-win-x64.exe", "PunkcodeAI-win-x64.exe.blockmap")
-foreach ($f in $files) {
-  $p = Join-Path $DistDir $f
-  if (-not (Test-Path $p)) { throw "Missing artifact '$f' in $DistDir (did packaging succeed?)" }
+# 上传 dist 里所有 electron-updater 更新产物(win + mac 都覆盖):
+#   latest*.yml (latest.yml=win / latest-mac.yml=mac), PunkcodeAI-*.exe(.blockmap)=Windows,
+#   PunkcodeAI-*.dmg=macOS 手动安装, PunkcodeAI-*.zip(.blockmap)=macOS 自动更新(electron-updater 下 zip)。
+# 一台机器一次通常只有某平台产物; 跨平台发布把对应文件放进同一 DistDir 即可。
+$patterns = @("latest*.yml", "PunkcodeAI-*.exe", "PunkcodeAI-*.exe.blockmap", "PunkcodeAI-*.dmg", "PunkcodeAI-*.zip", "PunkcodeAI-*.zip.blockmap")
+$files = @()
+foreach ($pat in $patterns) {
+  Get-ChildItem -Path $DistDir -Filter $pat -File -ErrorAction SilentlyContinue | ForEach-Object { $files += $_.Name }
 }
+$files = @($files | Sort-Object -Unique)
+if ($files.Count -eq 0) { throw "No publishable artifacts (latest*.yml / PunkcodeAI-*) found in $DistDir (did packaging succeed?)" }
+Write-Output ("[0/3] artifacts: " + ($files -join ", "))
 
 $target = "$User@$HostName"
 
