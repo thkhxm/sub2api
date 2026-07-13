@@ -1733,3 +1733,124 @@ func TestAnthropicEventToResponses_CacheTokensFromMessageDelta(t *testing.T) {
 	require.NotNil(t, completed.Response.Usage.InputTokensDetails)
 	assert.Equal(t, 11, completed.Response.Usage.InputTokensDetails.CachedTokens)
 }
+
+func TestAnthropicEventToResponses_ReasoningOnlySynthesizesVisibleText(t *testing.T) {
+	state := NewAnthropicEventToResponsesState()
+	var events []ResponsesStreamEvent
+	index0 := 0
+	emit := func(evt *AnthropicStreamEvent) {
+		events = append(events, AnthropicEventToResponsesEvents(evt, state)...)
+	}
+
+	emit(&AnthropicStreamEvent{
+		Type: "message_start",
+		Message: &AnthropicResponse{
+			ID:    "msg_reasoning_only",
+			Model: "claude-sonnet-4-5-20250929",
+			Usage: AnthropicUsage{InputTokens: 10},
+		},
+	})
+	emit(&AnthropicStreamEvent{
+		Type:         "content_block_start",
+		Index:        &index0,
+		ContentBlock: &AnthropicContentBlock{Type: "thinking"},
+	})
+	emit(&AnthropicStreamEvent{
+		Type:  "content_block_delta",
+		Index: &index0,
+		Delta: &AnthropicDelta{
+			Type:     "thinking_delta",
+			Thinking: "thinking before final",
+		},
+	})
+	emit(&AnthropicStreamEvent{Type: "content_block_stop", Index: &index0})
+	emit(&AnthropicStreamEvent{
+		Type:  "message_delta",
+		Usage: &AnthropicUsage{OutputTokens: 5},
+	})
+	emit(&AnthropicStreamEvent{Type: "message_stop"})
+
+	open := map[int]string{}
+	var sawTextDelta, sawTextDone, sawMessageDone bool
+	for _, e := range events {
+		switch e.Type {
+		case "response.output_item.added":
+			require.NotNil(t, e.Item)
+			open[e.OutputIndex] = e.Item.Type
+		case "response.output_text.delta":
+			sawTextDelta = true
+			require.Equalf(t, "message", open[e.OutputIndex], "fallback text delta before its message item")
+			require.Equal(t, "thinking before final", e.Delta)
+		case "response.output_text.done":
+			sawTextDone = true
+			require.Equal(t, "thinking before final", e.Text)
+		case "response.output_item.done":
+			if e.Item != nil && e.Item.Type == "message" {
+				sawMessageDone = true
+				require.Equal(t, "thinking before final", e.Item.Content[0].Text)
+			}
+		case "response.completed":
+			require.NotNil(t, e.Response)
+			require.Equal(t, "completed", e.Response.Status)
+			require.NotNil(t, e.Response.Usage)
+			require.Equal(t, 10, e.Response.Usage.InputTokens)
+			require.Equal(t, 5, e.Response.Usage.OutputTokens)
+		}
+	}
+
+	require.True(t, sawTextDelta, "reasoning-only Anthropic stream must produce visible text delta")
+	require.True(t, sawTextDone, "reasoning-only Anthropic stream must close visible text part")
+	require.True(t, sawMessageDone, "reasoning-only Anthropic stream must close synthesized message item")
+}
+
+func TestAnthropicEventToResponses_ReasoningThenTextDoesNotDuplicateFallback(t *testing.T) {
+	state := NewAnthropicEventToResponsesState()
+	var events []ResponsesStreamEvent
+	index0 := 0
+	index1 := 1
+	emit := func(evt *AnthropicStreamEvent) {
+		events = append(events, AnthropicEventToResponsesEvents(evt, state)...)
+	}
+
+	emit(&AnthropicStreamEvent{
+		Type:    "message_start",
+		Message: &AnthropicResponse{ID: "msg_reasoning_text", Model: "claude-sonnet-4-5-20250929"},
+	})
+	emit(&AnthropicStreamEvent{
+		Type:         "content_block_start",
+		Index:        &index0,
+		ContentBlock: &AnthropicContentBlock{Type: "thinking"},
+	})
+	emit(&AnthropicStreamEvent{
+		Type:  "content_block_delta",
+		Index: &index0,
+		Delta: &AnthropicDelta{
+			Type:     "thinking_delta",
+			Thinking: "private plan",
+		},
+	})
+	emit(&AnthropicStreamEvent{Type: "content_block_stop", Index: &index0})
+	emit(&AnthropicStreamEvent{
+		Type:         "content_block_start",
+		Index:        &index1,
+		ContentBlock: &AnthropicContentBlock{Type: "text"},
+	})
+	emit(&AnthropicStreamEvent{
+		Type:  "content_block_delta",
+		Index: &index1,
+		Delta: &AnthropicDelta{
+			Type: "text_delta",
+			Text: "final answer",
+		},
+	})
+	emit(&AnthropicStreamEvent{Type: "content_block_stop", Index: &index1})
+	emit(&AnthropicStreamEvent{Type: "message_stop"})
+
+	var textDeltas []string
+	for _, e := range events {
+		if e.Type == "response.output_text.delta" {
+			textDeltas = append(textDeltas, e.Delta)
+		}
+	}
+	require.Equal(t, []string{"final answer"}, textDeltas)
+}
