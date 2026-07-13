@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -22,9 +23,10 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 	}
 
 	out := &ResponsesResponse{
-		ID:     id,
-		Object: "response",
-		Model:  resp.Model,
+		ID:        id,
+		Object:    "response",
+		CreatedAt: time.Now().Unix(),
+		Model:     resp.Model,
 	}
 
 	var outputs []ResponsesOutput
@@ -151,10 +153,13 @@ type AnthropicEventToResponsesState struct {
 
 	// For message output: accumulate text parts
 	ContentIndex int
+	Text         strings.Builder
+	Reasoning    strings.Builder
 
 	// For function_call: track per-output info
 	CurrentCallID string
 	CurrentName   string
+	SawToolCall   bool
 
 	// Usage from message_start / message_delta. InputTokens here follows
 	// Anthropic semantics (excludes cached tokens); they are added back when
@@ -207,6 +212,7 @@ func FinalizeAnthropicResponsesStream(state *AnthropicEventToResponsesState) []R
 
 	// Close any open item
 	events = append(events, closeCurrentResponsesItem(state)...)
+	events = append(events, synthesizeAnthropicReasoningFallbackMessage(state)...)
 
 	// Emit response.completed
 	events = append(events, makeResponsesCompletedEvent(state, "completed", nil))
@@ -298,6 +304,7 @@ func anthToResHandleContentBlockStart(evt *AnthropicStreamEvent, state *Anthropi
 		state.CurrentItemType = "function_call"
 		state.CurrentCallID = toResponsesCallID(evt.ContentBlock.ID)
 		state.CurrentName = evt.ContentBlock.Name
+		state.SawToolCall = true
 
 		events = append(events, makeResponsesEvent(state, "response.output_item.added", &ResponsesStreamEvent{
 			OutputIndex: state.OutputIndex,
@@ -324,6 +331,7 @@ func anthToResHandleContentBlockDelta(evt *AnthropicStreamEvent, state *Anthropi
 		if evt.Delta.Text == "" {
 			return nil
 		}
+		_, _ = state.Text.WriteString(evt.Delta.Text)
 		return []ResponsesStreamEvent{makeResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
 			OutputIndex:  state.OutputIndex,
 			ContentIndex: state.ContentIndex,
@@ -335,6 +343,7 @@ func anthToResHandleContentBlockDelta(evt *AnthropicStreamEvent, state *Anthropi
 		if evt.Delta.Thinking == "" {
 			return nil
 		}
+		_, _ = state.Reasoning.WriteString(evt.Delta.Thinking)
 		return []ResponsesStreamEvent{makeResponsesEvent(state, "response.reasoning_summary_text.delta", &ResponsesStreamEvent{
 			OutputIndex:  state.OutputIndex,
 			SummaryIndex: 0,
@@ -430,6 +439,7 @@ func anthToResHandleMessageStop(state *AnthropicEventToResponsesState) []Respons
 
 	// Close any open item
 	events = append(events, closeCurrentResponsesItem(state)...)
+	events = append(events, synthesizeAnthropicReasoningFallbackMessage(state)...)
 
 	// Determine status
 	status := "completed"
@@ -469,6 +479,61 @@ func closeCurrentResponsesItem(state *AnthropicEventToResponsesState) []Response
 	})}
 }
 
+func synthesizeAnthropicReasoningFallbackMessage(state *AnthropicEventToResponsesState) []ResponsesStreamEvent {
+	if state == nil ||
+		state.Text.Len() > 0 ||
+		state.Reasoning.Len() == 0 ||
+		state.SawToolCall {
+		return nil
+	}
+
+	text := state.Reasoning.String()
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+
+	itemID := generateItemID()
+	outputIndex := state.OutputIndex
+	_, _ = state.Text.WriteString(text)
+	state.OutputIndex++
+	state.ContentIndex = 0
+
+	return []ResponsesStreamEvent{
+		makeResponsesEvent(state, "response.output_item.added", &ResponsesStreamEvent{
+			OutputIndex: outputIndex,
+			Item: &ResponsesOutput{
+				Type:    "message",
+				ID:      itemID,
+				Role:    "assistant",
+				Status:  "in_progress",
+				Content: []ResponsesContentPart{{Type: "output_text"}},
+			},
+		}),
+		makeResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
+			OutputIndex:  outputIndex,
+			ContentIndex: 0,
+			Delta:        text,
+			ItemID:       itemID,
+		}),
+		makeResponsesEvent(state, "response.output_text.done", &ResponsesStreamEvent{
+			OutputIndex:  outputIndex,
+			ContentIndex: 0,
+			Text:         text,
+			ItemID:       itemID,
+		}),
+		makeResponsesEvent(state, "response.output_item.done", &ResponsesStreamEvent{
+			OutputIndex: outputIndex,
+			Item: &ResponsesOutput{
+				Type:    "message",
+				ID:      itemID,
+				Role:    "assistant",
+				Status:  "completed",
+				Content: []ResponsesContentPart{{Type: "output_text", Text: text}},
+			},
+		}),
+	}
+}
+
 func makeResponsesCreatedEvent(state *AnthropicEventToResponsesState) ResponsesStreamEvent {
 	seq := state.SequenceNumber
 	state.SequenceNumber++
@@ -476,11 +541,12 @@ func makeResponsesCreatedEvent(state *AnthropicEventToResponsesState) ResponsesS
 		Type:           "response.created",
 		SequenceNumber: seq,
 		Response: &ResponsesResponse{
-			ID:     state.ResponseID,
-			Object: "response",
-			Model:  state.Model,
-			Status: "in_progress",
-			Output: []ResponsesOutput{},
+			ID:        state.ResponseID,
+			Object:    "response",
+			CreatedAt: state.Created,
+			Model:     state.Model,
+			Status:    "in_progress",
+			Output:    []ResponsesOutput{},
 		},
 	}
 }
@@ -513,6 +579,7 @@ func makeResponsesCompletedEvent(
 		Response: &ResponsesResponse{
 			ID:                state.ResponseID,
 			Object:            "response",
+			CreatedAt:         state.Created,
 			Model:             state.Model,
 			Status:            status,
 			Output:            []ResponsesOutput{}, // Simplified; full output tracking would add complexity

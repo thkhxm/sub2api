@@ -460,10 +460,21 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 					continue
 				}
 				out := string(reverseToolNamesIfPresent(c, []byte(sse)))
-				fmt.Fprint(c.Writer, out) //nolint:errcheck
+				if _, err := fmt.Fprint(c.Writer, out); err != nil {
+					logger.L().Info("forward_as_responses stream: client disconnected while writing final event",
+						zap.String("request_id", requestID),
+					)
+					return resultWithUsage(), nil
+				}
 			}
-			c.Writer.Flush()
 		}
+		if _, err := fmt.Fprint(c.Writer, "data: [DONE]\n\n"); err != nil {
+			logger.L().Info("forward_as_responses stream: client disconnected while writing done sentinel",
+				zap.String("request_id", requestID),
+			)
+			return resultWithUsage(), nil
+		}
+		c.Writer.Flush()
 		return resultWithUsage(), nil
 	}
 

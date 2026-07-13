@@ -106,8 +106,16 @@ func TestWire_ArgumentsDonePresentEvenEmpty(t *testing.T) {
 // default marshalling (the response object is preserved).
 func TestWire_UnknownEventFallsBackToDefault(t *testing.T) {
 	m := marshalEvent(t, ResponsesStreamEvent{
-		Type:     "response.completed",
-		Response: &ResponsesResponse{ID: "resp_1", Object: "response", Status: "completed"},
+		Type: "response.completed",
+		Response: &ResponsesResponse{
+			ID:        "resp_1",
+			Object:    "response",
+			CreatedAt: 1710000000,
+			Status:    "completed",
+		},
 	})
 	require.Contains(t, m, "response")
+	response, ok := m["response"].(map[string]any)
+	require.True(t, ok, "response must be an object")
+	require.EqualValues(t, 1710000000, response["created_at"])
 }
