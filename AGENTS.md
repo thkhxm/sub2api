@@ -23,7 +23,7 @@ Primary stack:
 - Root build: `make build`
 - Root test: `make test`
 
-Version note: `DEV_GUIDE.md` documents CI expectations around Go 1.25.7, while `backend/go.mod` currently declares Go 1.26.4. Verify the intended Go version before changing CI, Docker, or release configuration.
+Version note: `backend/go.mod`, Docker build images, and CI currently use Go 1.26.5. Keep them aligned when changing build or release configuration.
 
 ## Repository Map
 

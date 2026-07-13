@@ -80,3 +80,9 @@ deploy/redis_data/
 .claude/
 issues/
 CLAUDE.md
+
+# Local agent/workflow artifacts and accidental host-path mirrors
+.codex/
+skills/
+skills.rar
+%SystemDrive%/
