@@ -223,7 +223,7 @@ services:
   # ===========================================================================
   # 一次性 seed：在 sub2api 健康后往 settings 表写入 PunkcodeAI 桌面端依赖的开关
   # （registration_enabled=true / email_verify_enabled=false / invitation_code_enabled=false）
-  # 幂等：脚本用 ON CONFLICT DO UPDATE，重复 up 安全。
+  # 数据保护：脚本用 ON CONFLICT DO NOTHING，只补缺失设置，不覆盖管理员已有配置。
   # ===========================================================================
   punkcode-seed:
     image: postgres:18-alpine
