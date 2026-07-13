@@ -86,7 +86,7 @@ chmod +x punkcode-prepare.sh punkcode-seed.sh
 
 脚本会：基于 `.env.punkcode` 生成 `.env.punkcode.prod`，用 openssl 现生成并替换 `JWT_SECRET`/`TOTP_ENCRYPTION_KEY`(64hex)/`POSTGRES_PASSWORD`/`REDIS_PASSWORD`/`ADMIN_PASSWORD`，覆写 `SERVER_MODE=release`、URL/CORS、端口，`chmod 600`，最后**打印一次 ADMIN_PASSWORD**——立即记到密码管理器/思源，后面登录后台要用。
 
-> 幂等：已存在 `.env.punkcode.prod` 时默认跳过（保护已上线密钥）。强制重生成用 `./punkcode-prepare.sh --force`（会自动备份旧文件）。
+> 幂等：已存在 `.env.punkcode.prod` 时默认跳过（保护已上线密钥）。升级时禁止重生成。计划内密钥轮换必须同时使用 `--force --acknowledge-secret-rotation-risk`，并先确认数据库、Redis、JWT、TOTP 和管理员口令的轮换方案。
 
 ### 2.4 拉起服务
 
@@ -233,11 +233,13 @@ cd /opt/punkcode-deploy
 # 1) 拿到新镜像
 #    方式 A：docker load 新的 punkcode-sub2api.tar.gz
 #    方式 B：docker pull ccr.ccs.tencentyun.com/<ns>/punkcode-sub2api:<新tag>，并改 prod.yml image
-# 2) 重新拉起（ent migration 容器启动时自动跑；seed 幂等重跑安全）
-docker compose -p punkcode -f docker-compose.punkcode.prod.yml --env-file .env.punkcode.prod up -d
+# 2) 只替换应用容器。不要重建 PostgreSQL/Redis，也不要执行 down -v。
+#    SQL migration 会在新应用启动时自动执行；seed 不参与升级。
+docker compose -p punkcode -f docker-compose.punkcode.prod.yml \
+  --env-file .env.punkcode.prod up -d --no-deps --force-recreate sub2api
 # 3) 验证
 docker compose -p punkcode -f docker-compose.punkcode.prod.yml ps
 curl -s https://<DOMAIN>/health
 ```
 
-> `.env.punkcode.prod` 升级时**不要重生成**（prepare 脚本默认幂等跳过）；重生成会洗掉密钥导致 JWT 失效、数据库密码对不上连不上。
+> `.env.punkcode.prod` 升级时**不要重生成**（prepare 脚本默认幂等跳过）；重生成会洗掉密钥导致 JWT 失效、数据库密码对不上连不上。`punkcode-seed.sh` 现在只补缺失设置，不会覆盖管理员已有配置。

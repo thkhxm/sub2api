@@ -80,3 +80,9 @@ deploy/redis_data/
 .claude/
 issues/
 CLAUDE.md
+
+# Local workflow and imported tool artifacts
+.codex/
+skills/
+skills.rar
+%SystemDrive%/

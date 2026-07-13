@@ -119,6 +119,8 @@ tests
 CLAUDE.md
 .claude
 scripts
+!backend/scripts/
+!backend/scripts/resolve-version.sh
 .code-review-state
 #openspec/
 code-reviews/
@@ -136,6 +138,9 @@ docs/*
 !docs/legal/*.md
 .serena/
 .codex/
+
+# Project-level Codex instructions are versioned; local workflow records stay ignored.
+!AGENTS.md
 frontend/coverage/
 aicodex
 output/

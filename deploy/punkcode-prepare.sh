@@ -9,11 +9,12 @@
 #       .env 文件无关，不读不写旧文件。
 #
 # 幂等：默认【已存在则不覆盖】，避免重跑把已上线的密钥洗掉（会导致 JWT 全失效、
-#       数据库连不上）。需要强制重生成时加 --force（会先备份旧文件为 .bak.<ts>）。
+#       数据库连不上）。强制轮换必须同时提供两个高风险参数，并会先备份旧文件。
 #
 # 用法：
 #   ./punkcode-prepare.sh            # 首次生成
-#   ./punkcode-prepare.sh --force    # 强制重生成（旧文件自动备份）
+#   ./punkcode-prepare.sh --force --acknowledge-secret-rotation-risk
+#                                      # 强制轮换（仅灾难恢复或计划内密钥轮换）
 #
 # 依赖：bash、openssl、sed、awk（腾讯云主机默认都有）。
 # =============================================================================
@@ -25,10 +26,12 @@ BASE_ENV="${SCRIPT_DIR}/.env.punkcode"
 PROD_ENV="${SCRIPT_DIR}/.env.punkcode.prod"
 
 FORCE=0
+ROTATION_RISK_ACK=0
 for arg in "$@"; do
   case "$arg" in
     --force) FORCE=1 ;;
-    *) echo "未知参数: $arg（仅支持 --force）" >&2; exit 2 ;;
+    --acknowledge-secret-rotation-risk) ROTATION_RISK_ACK=1 ;;
+    *) echo "未知参数: $arg" >&2; exit 2 ;;
   esac
 done
 
@@ -46,10 +49,16 @@ fi
 # ---- 幂等保护 ----
 if [ -f "$PROD_ENV" ] && [ "$FORCE" -ne 1 ]; then
   echo "已存在 $PROD_ENV，跳过生成（不覆盖已上线密钥）。"
-  echo "如确需重新生成，请加 --force（会备份旧文件）。"
+  echo "升级不需要也不允许重新生成该文件。"
   exit 0
 fi
 if [ -f "$PROD_ENV" ] && [ "$FORCE" -eq 1 ]; then
+  if [ "$ROTATION_RISK_ACK" -ne 1 ]; then
+    echo "ERROR: 拒绝覆盖已有生产环境文件。" >&2
+    echo "       --force 会轮换数据库、Redis、JWT、TOTP 和管理员口令，不能用于升级。" >&2
+    echo "       如确为计划内密钥轮换，请同时提供 --acknowledge-secret-rotation-risk。" >&2
+    exit 1
+  fi
   BAK="${PROD_ENV}.bak.$(date +%Y%m%d%H%M%S)"
   cp -p "$PROD_ENV" "$BAK"
   echo "已备份旧文件 -> $BAK"

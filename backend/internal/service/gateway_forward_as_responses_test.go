@@ -94,5 +94,8 @@ func TestHandleResponsesStreamingResponse_PreservesMessageStartCacheUsage(t *tes
 	require.Equal(t, 8, result.Usage.OutputTokens)
 	require.Equal(t, 11, result.Usage.CacheReadInputTokens)
 	require.Equal(t, 4, result.Usage.CacheCreationInputTokens)
-	require.Contains(t, rec.Body.String(), `response.completed`)
+	body := rec.Body.String()
+	require.Contains(t, body, `response.completed`)
+	require.Contains(t, body, "data: [DONE]")
+	require.Less(t, strings.Index(body, `response.completed`), strings.Index(body, "data: [DONE]"))
 }

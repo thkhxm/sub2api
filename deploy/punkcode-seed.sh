@@ -7,7 +7,7 @@
 #   - email_verify_enabled    = false  关闭邮件验证（企业内部用）
 #   - invitation_code_enabled = false  关闭邀请码
 #
-# 幂等：使用 ON CONFLICT (key) DO UPDATE，多次执行结果一致。
+# 数据保护：只补齐缺失设置，不覆盖管理员已经调整过的值。
 # =============================================================================
 
 set -e
@@ -37,9 +37,7 @@ INSERT INTO settings (key, value, updated_at) VALUES
   ('registration_enabled',    'true',  NOW()),
   ('email_verify_enabled',    'false', NOW()),
   ('invitation_code_enabled', 'false', NOW())
-ON CONFLICT (key) DO UPDATE
-  SET value = EXCLUDED.value,
-      updated_at = NOW();
+ON CONFLICT (key) DO NOTHING;
 
 SELECT key, value FROM settings
 WHERE key IN ('registration_enabled', 'email_verify_enabled', 'invitation_code_enabled')
