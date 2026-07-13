@@ -17,6 +17,7 @@ type AdminHandlers struct {
 	OpenAIOAuth            *admin.OpenAIOAuthHandler
 	GeminiOAuth            *admin.GeminiOAuthHandler
 	AntigravityOAuth       *admin.AntigravityOAuthHandler
+	GrokOAuth              *admin.GrokOAuthHandler
 	Proxy                  *admin.ProxyHandler
 	Redeem                 *admin.RedeemHandler
 	Promo                  *admin.PromoHandler
@@ -61,6 +62,7 @@ type Handlers struct {
 	Cli              *CliHandler
 	BalanceRequest   *BalanceRequestHandler
 	AccountReauth    *AccountReauthHandler
+	BatchImage       *BatchImageHandler
 }
 
 // BuildInfo contains build-time information
