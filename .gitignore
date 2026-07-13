@@ -137,6 +137,9 @@ docs/*
 !docs/legal/*.md
 .serena/
 .codex/
+
+# Project-level Codex instructions are versioned; local workflow records stay ignored.
+!AGENTS.md
 frontend/coverage/
 aicodex
 output/
