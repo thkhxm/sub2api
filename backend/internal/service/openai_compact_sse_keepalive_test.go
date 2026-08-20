@@ -70,6 +70,37 @@ func TestOpenAICompactSSEKeepalive_StopBeforeFirstBeatKeepsWriterUntouched(t *te
 	require.False(t, StopOpenAICompactSSEKeepaliveCommitted(c))
 }
 
+func TestStartOpenAICompactSSEKeepalive_RestoresOriginalWriter(t *testing.T) {
+	c, _ := newCompactBridgeTestContext(t, true)
+	originalWriter := c.Writer
+	stop := StartOpenAICompactSSEKeepalive(c, time.Hour)
+
+	_, wrapped := c.Writer.(*openAICompactKeepaliveWriter)
+	require.True(t, wrapped)
+	require.NotSame(t, originalWriter, c.Writer)
+
+	stop()
+	require.Same(t, originalWriter, c.Writer)
+	require.NotPanics(t, stop, "停止函数必须保持幂等")
+}
+
+func TestOpenAICompactKeepaliveWriter_ReleasedInnerWriterDoesNotPanic(t *testing.T) {
+	w := &openAICompactKeepaliveWriter{
+		k: &openAICompactSSEKeepalive{stop: make(chan struct{})},
+	}
+
+	require.NotPanics(t, func() { require.Equal(t, 0, w.Status()) })
+	require.NotPanics(t, func() { require.Equal(t, 0, w.Size()) })
+	require.NotPanics(t, func() { require.False(t, w.Written()) })
+	require.NotPanics(t, func() { require.NotNil(t, w.Header()) })
+	require.NotPanics(t, func() {
+		conn, rw, err := w.Hijack()
+		require.Nil(t, conn)
+		require.Nil(t, rw)
+		require.Error(t, err)
+	})
+}
+
 // 心跳已提交后，2xx 桥接续写事件而不重复提交响应头。
 func TestWriteOpenAICompactSSEBridge_AfterKeepaliveCommitAppendsEvents(t *testing.T) {
 	c, rec := newCompactBridgeTestContext(t, true)

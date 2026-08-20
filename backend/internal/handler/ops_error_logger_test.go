@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -137,6 +138,31 @@ func TestOpsErrorLoggerMiddleware_DoesNotBreakOuterMiddlewares(t *testing.T) {
 		r.ServeHTTP(rec, req)
 	})
 	require.Equal(t, http.StatusNoContent, rec.Code)
+}
+
+func TestOpsErrorLoggerMiddleware_CompactKeepaliveRestoresOriginalWriter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	outerStatus := -1
+	router.Use(func(c *gin.Context) {
+		c.Next()
+		outerStatus = c.Writer.Status()
+	})
+	router.Use(OpsErrorLoggerMiddleware(nil))
+	router.GET("/compact", func(c *gin.Context) {
+		service.MarkOpenAICompactClientStream(c)
+		stop := service.StartOpenAICompactSSEKeepalive(c, time.Hour)
+		defer stop()
+		c.Status(http.StatusOK)
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/compact", nil)
+	require.NotPanics(t, func() {
+		router.ServeHTTP(recorder, request)
+	})
+	require.Equal(t, http.StatusOK, outerStatus)
+	require.Equal(t, http.StatusOK, recorder.Code)
 }
 
 // setupOpsErrorLogTestQueue 阻止 enqueueOpsErrorLog 启动真实 worker，改用可检查的测试队列。
