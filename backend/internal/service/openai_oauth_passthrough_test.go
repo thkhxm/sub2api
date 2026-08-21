@@ -36,6 +36,20 @@ type httpUpstreamRecorder struct {
 	err       error
 }
 
+type contextBlockingHTTPUpstream struct {
+	started chan struct{}
+}
+
+func (u *contextBlockingHTTPUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	close(u.started)
+	<-req.Context().Done()
+	return nil, req.Context().Err()
+}
+
+func (u *contextBlockingHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
 type passthroughErrReadCloser struct {
 	err error
 }
@@ -422,6 +436,59 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormali
 	require.NotContains(t, body, "\"name\":\"edit\"")
 }
 
+func TestOpenAIGatewayService_OAuthPassthrough_ClientCancelStopsResponseHeaderWait(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil)).WithContext(ctx)
+	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
+
+	upstream := &contextBlockingHTTPUpstream{started: make(chan struct{})}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:          123,
+		Name:        "acc",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+		Extra:       map[string]any{"openai_passthrough": true},
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+	body := []byte(`{"model":"gpt-5.2","stream":true,"input":"hi"}`)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := svc.Forward(ctx, c, account, body)
+		errCh <- err
+	}()
+	select {
+	case <-upstream.started:
+	case <-time.After(time.Second):
+		t.Fatal("upstream request did not start")
+	}
+	cancel()
+
+	select {
+	case err := <-errCh:
+		require.ErrorIs(t, err, context.Canceled)
+		var failoverErr *UpstreamFailoverError
+		require.False(t, errors.As(err, &failoverErr))
+	case <-time.After(time.Second):
+		t.Fatal("response header wait did not stop after client cancellation")
+	}
+}
+
 func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -476,7 +543,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreami
 	require.Contains(t, rec.Body.String(), `"id":"cmp_123"`)
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCancel(t *testing.T) {
+func TestOpenAIGatewayService_OAuthPassthrough_CanceledBeforeForwardDrainsImmediateResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -518,8 +585,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCance
 	result, err := svc.Forward(reqCtx, c, account, originalBody)
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	require.Equal(t, 2, result.Usage.InputTokens)
+	require.Equal(t, 1, result.Usage.OutputTokens)
 	require.NotNil(t, upstream.lastReq)
-	require.NoError(t, upstream.lastReq.Context().Err())
+	require.ErrorIs(t, upstream.lastReq.Context().Err(), context.Canceled)
 }
 
 func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsRejectedBeforeUpstream(t *testing.T) {
