@@ -335,9 +335,13 @@ func (h *CliHandler) GetLlm(c *gin.Context) {
 // codex 上游当前未通过 API 上报 context，这里按模型 ID 给【保守估计值】：
 //   - 之前桌面端 fallback 写死 200k，浪费了 gpt-5.x 系列更大的容量
 //   - 取保守值（不取上游理论峰值）避免误判"能塞更多"导致 context_length_exceeded
+//
 // 如确认实际套餐 context 更大，可上调本表。
 func contextWindowForCliModel(id string) int {
 	switch {
+	case id == "gpt-6" || id == "gpt-6-astra" || strings.HasPrefix(id, "gpt-6-astra-"):
+		// Astra 总窗口为 105 万；桌面端按 92.2 万最大输入预算判断容量，预留输出空间。
+		return 922000
 	case strings.HasPrefix(id, "gpt-5"):
 		return 272000
 	case strings.HasPrefix(id, "gpt-image"):
