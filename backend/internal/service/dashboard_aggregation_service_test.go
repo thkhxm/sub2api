@@ -11,21 +11,22 @@ import (
 )
 
 type dashboardAggregationRepoTestStub struct {
-	aggregateCalls       int
-	recomputeCalls       int
-	cleanupUsageCalls    int
-	cleanupDedupCalls    int
-	ensurePartitionCalls int
-	lastStart            time.Time
-	lastEnd              time.Time
-	watermark            time.Time
-	aggregateErr         error
-	cleanupAggregatesErr error
-	cleanupUsageErr      error
-	cleanupDedupErr      error
-	ensurePartitionErr   error
-	aggregateCtx         context.Context
-	events               *[]string
+	aggregateCalls        int
+	recomputeCalls        int
+	cleanupUsageCalls     int
+	cleanupAggregateCalls int
+	cleanupDedupCalls     int
+	ensurePartitionCalls  int
+	lastStart             time.Time
+	lastEnd               time.Time
+	watermark             time.Time
+	aggregateErr          error
+	cleanupAggregatesErr  error
+	cleanupUsageErr       error
+	cleanupDedupErr       error
+	ensurePartitionErr    error
+	aggregateCtx          context.Context
+	events                *[]string
 }
 
 type dashboardAggregationRollupRepoTestStub struct {
@@ -71,6 +72,7 @@ func (s *dashboardAggregationRepoTestStub) UpdateAggregationWatermark(ctx contex
 }
 
 func (s *dashboardAggregationRepoTestStub) CleanupAggregates(ctx context.Context, hourlyCutoff, dailyCutoff time.Time) error {
+	s.cleanupAggregateCalls++
 	return s.cleanupAggregatesErr
 }
 
@@ -87,6 +89,29 @@ func (s *dashboardAggregationRepoTestStub) CleanupUsageBillingDedup(ctx context.
 func (s *dashboardAggregationRepoTestStub) EnsureUsageLogsPartitions(ctx context.Context, now time.Time) error {
 	s.ensurePartitionCalls++
 	return s.ensurePartitionErr
+}
+
+func TestDashboardAggregationService_PreserveHistoryKeepsAggregationAndSkipsDeletion(t *testing.T) {
+	repo := &dashboardAggregationRepoTestStub{watermark: time.Now().UTC().Add(-time.Hour)}
+	svc := &DashboardAggregationService{
+		repo: repo,
+		cfg: config.DashboardAggregationConfig{
+			Enabled:         true,
+			LookbackSeconds: 120,
+			Retention: config.DashboardAggregationRetentionConfig{
+				PreserveHistoricalData: true,
+				UsageLogsDays:          90,
+				UsageBillingDedupDays:  365,
+				HourlyDays:             180,
+				DailyDays:              730,
+			},
+		},
+	}
+	svc.runScheduledAggregation()
+	require.Equal(t, 1, repo.aggregateCalls)
+	require.Zero(t, repo.cleanupAggregateCalls)
+	require.Zero(t, repo.cleanupUsageCalls)
+	require.Zero(t, repo.cleanupDedupCalls)
 }
 
 func TestDashboardAggregationService_RunScheduledAggregation_EpochUsesRetentionStart(t *testing.T) {

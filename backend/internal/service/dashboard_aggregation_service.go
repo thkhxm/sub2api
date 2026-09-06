@@ -353,6 +353,10 @@ func (s *DashboardAggregationService) aggregateRange(ctx context.Context, start,
 }
 
 func (s *DashboardAggregationService) maybeCleanupRetention(ctx context.Context, now time.Time) {
+	// 升级时可保留既有数据；汇总计算和人工清理任务仍沿用各自的正常流程。
+	if s.cfg.Retention.PreserveHistoricalData {
+		return
+	}
 	lastAny := s.lastRetentionCleanup.Load()
 	if lastAny != nil {
 		if last, ok := lastAny.(time.Time); ok && now.Sub(last) < dashboardAggregationRetentionInterval {

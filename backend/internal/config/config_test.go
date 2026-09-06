@@ -30,6 +30,28 @@ func TestLoadDefaultModelsListReadMaxBytes(t *testing.T) {
 	require.Equal(t, DefaultModelsListReadMaxBytes, cfg.Gateway.ModelsListReadMaxBytes)
 }
 
+func TestLoadDashboardPreserveHistoricalData(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{"default", "", false},
+		{"preserve", "true", true},
+		{"existing_cleanup", "false", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			t.Setenv("DASHBOARD_AGGREGATION_ENABLED", "true")
+			t.Setenv("DASHBOARD_AGGREGATION_RETENTION_PRESERVE_HISTORICAL_DATA", tc.value)
+			cfg, err := Load()
+			require.NoError(t, err)
+			require.Equal(t, tc.want, cfg.DashboardAgg.Retention.PreserveHistoricalData)
+			require.True(t, cfg.DashboardAgg.Enabled)
+		})
+	}
+}
+
 func TestLoadTimezonePrecedence(t *testing.T) {
 	tests := []struct {
 		name         string
