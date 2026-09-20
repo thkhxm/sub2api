@@ -955,6 +955,8 @@ var ProviderSet = wire.NewSet(
 
 	// PunkcodeAI: balance request
 	NewBalanceRequestService,
+	ProvideVPNService,
+	NewMarzbanVPNClient,
 
 	// 账号 revoke 自动告警 + 成员自助重授权
 	NewIMWebhookNotifier,

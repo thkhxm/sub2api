@@ -1,0 +1,30 @@
+export default {
+  vpn: {
+    title: 'VPN 订阅', adminTitle: 'VPN 管理', description: '查看订阅、每月流量和连接状态',
+    policy: '每人一份订阅，默认每月 30 GiB；上海时间每月 22 日 00:00 重置，不结转。月中开通也获得完整额度。',
+    createPolicy: '余额大于 0 时可申请开通，不扣费。开通后余额变为 0 不影响订阅。节点自动分配，无法自行删除重建或转绑。',
+    create: '开通订阅', createForUser: '为用户开通', noSubscription: '尚未开通 VPN 订阅', unavailable: '当前无法开通，请联系管理员。',
+    refresh: '刷新状态', loading: '正在加载…', loadFailed: '加载失败，请重试', actionFailed: '操作失败，请重试', accepted: '申请已受理，请等待状态更新',
+    pendingNotice: '变更正在生效。此订阅仍占用名额，请勿重复创建；失败时请联系管理员重试。',
+    notAvailable: '订阅当前不可用，请查看生效状态与最近错误。', ready: '可以连接',
+    server: '所属节点', status: '订阅状态', applyStatus: '生效状态', accessState: '连接权限', operationStatus: '操作状态',
+    quota: '每月额度', upload: '上传', download: '下载', used: '已用流量', remaining: '剩余流量',
+    period: '本期时间', reset: '下次重置', sampled: '采样时间', synced: '同步时间', timezone: '时间均为上海时间（UTC+8）',
+    accounting: '计量状态', staleNotice: '采样不是最新完整数据，显示的流量可能滞后或存在缺口。', lastError: '最近错误',
+    links: '订阅地址', linksSecret: '订阅地址包含连接凭据，请勿分享。将地址粘贴到对应客户端的订阅导入页面。',
+    clash: 'Clash / Mihomo', base64: '通用 Base64 / v2ray', copy: '复制地址',
+    servers: '节点配置', subscriptions: '用户订阅', addServer: '添加节点', editServer: '编辑节点', probe: '检测连接',
+    name: '节点名称', baseUrl: '管理接口 HTTPS 地址', adminUsername: '接入管理员用户名', adminPassword: '接入管理员密码', caPem: '自签 CA 证书（PEM，可选）',
+    passwordHint: '修改时留空保留原密码。', caHint: '证书不会回显；编辑时留空保留原证书。', bindingHint: '已有订阅绑定的节点不能变更地址；接入其他实例请新增节点。',
+    enabled: '启用', disabled: '禁用', healthy: '健康', unhealthy: '不可用', personalCount: '个人账号数', assignedCount: '绑定数', pendingCount: '预占数', lastChecked: '最近检测',
+    save: '保存', cancel: '取消', edit: '编辑额度与状态', details: '详情', noServers: '尚未添加节点', noResults: '没有匹配的订阅',
+    search: '搜索用户 / 邮箱', searchUsers: '查找用户', selectUser: '选择用户', allServers: '全部节点', allStatuses: '全部状态', filter: '查询',
+    createHint: '自动选择健康且启用、人数最少的节点；管理员代开不受余额限制。已有订阅将返回原订阅。',
+    quotaGiB: '每月额度（GiB）', invalidQuota: '请输入大于 0 的有效额度，字节值不能超过安全整数上限。',
+    invalidHttps: '节点地址必须使用 HTTPS，且不能包含用户名或密码。',
+    retry: '重试原操作', revoke: '轮换订阅凭据', revokeConfirm: '轮换会使原地址和连接凭据失效，并断开旧连接。此用户所有设备都需要重新导入订阅；流量不会清零。是否继续？',
+    confirm: '确认轮换', total: '订阅总数', healthyServers: '健康节点', previous: '上一页', next: '下一页', page: '第 {page} 页，共 {total} 条',
+    reasons: { balance_required: '账户余额需要大于 0 才能开通；申请不会扣费。', user_inactive: '账户已停用，无法开通。', no_available_server: '暂时没有健康且启用的可用节点，请稍后刷新或联系管理员。', already_exists: '您已经有一份订阅，请刷新查看。' },
+    states: { active: '启用', disabled: '禁用', limited: '超额', expired: '过期', provisioning: '创建中', pending: '处理中', running: '正在执行', applied: '已生效', failed: '失败', succeeded: '成功', allowed: '允许', blocked: '阻止', unknown: '未知', ok: '正常', stale: '采样滞后', gap_detected: '计量有缺口' }
+  }
+}

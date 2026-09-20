@@ -198,6 +198,18 @@ const routes: RouteRecordRaw[] = [
 
   // ==================== User Routes ====================
   {
+    path: '/vpn',
+    name: 'VpnSubscription',
+    component: () => import('@/views/user/VpnView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: false, title: 'VPN', titleKey: 'vpn.title', descriptionKey: 'vpn.description' }
+  },
+  {
+    path: '/admin/vpn',
+    name: 'AdminVpn',
+    component: () => import('@/views/admin/VpnView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'VPN', titleKey: 'vpn.adminTitle' }
+  },
+  {
     path: '/',
     redirect: '/home'
   },

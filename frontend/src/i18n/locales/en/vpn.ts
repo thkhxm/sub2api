@@ -1,0 +1,30 @@
+export default {
+  vpn: {
+    title: 'VPN subscription', adminTitle: 'VPN management', description: 'Subscription, monthly traffic and connection status',
+    policy: 'One subscription per person, with 30 GiB each month by default. Resets at 00:00 Shanghai time on the 22nd, with no rollover. Mid-month activation includes the full quota.',
+    createPolicy: 'A positive balance is required to apply; no payment is deducted. A later zero balance does not disable your subscription. Servers are assigned automatically. Deleting, recreating or transferring a subscription is not supported.',
+    create: 'Activate subscription', createForUser: 'Activate for a user', noSubscription: 'No VPN subscription yet', unavailable: 'Activation is unavailable. Please contact an administrator.',
+    refresh: 'Refresh status', loading: 'Loading…', loadFailed: 'Unable to load. Please retry.', actionFailed: 'Operation failed. Please retry.', accepted: 'Request accepted. Waiting for the status to update.',
+    pendingNotice: 'Changes are being applied. This subscription still occupies your slot; do not create another one. Contact an administrator to retry a failed operation.',
+    notAvailable: 'This subscription is currently unavailable. Check the application status and latest error.', ready: 'Ready to connect',
+    server: 'Assigned server', status: 'Subscription status', applyStatus: 'Application status', accessState: 'Connection access', operationStatus: 'Operation status',
+    quota: 'Monthly quota', upload: 'Upload', download: 'Download', used: 'Traffic used', remaining: 'Remaining traffic',
+    period: 'Current period', reset: 'Next reset', sampled: 'Sampled at', synced: 'Synced at', timezone: 'All times are Shanghai time (UTC+8)',
+    accounting: 'Accounting status', staleNotice: 'The sample is not current and complete. Traffic totals may be delayed or have gaps.', lastError: 'Latest error',
+    links: 'Subscription URLs', linksSecret: 'These URLs contain connection credentials. Do not share them. Paste the URL into the subscription import page of your client.',
+    clash: 'Clash / Mihomo', base64: 'Generic Base64 / v2ray', copy: 'Copy URL',
+    servers: 'Server configuration', subscriptions: 'User subscriptions', addServer: 'Add server', editServer: 'Edit server', probe: 'Test connection',
+    name: 'Server name', baseUrl: 'Management API HTTPS URL', adminUsername: 'Integration administrator username', adminPassword: 'Integration administrator password', caPem: 'Custom CA certificate (PEM, optional)',
+    passwordHint: 'Leave blank when editing to keep the existing password.', caHint: 'Certificates are never displayed. Leave blank when editing to keep the existing certificate.', bindingHint: 'The URL of a server with bound subscriptions cannot change. Add a new server for another instance.',
+    enabled: 'Enabled', disabled: 'Disabled', healthy: 'Healthy', unhealthy: 'Unavailable', personalCount: 'Personal accounts', assignedCount: 'Assigned', pendingCount: 'Reserved', lastChecked: 'Last checked',
+    save: 'Save', cancel: 'Cancel', edit: 'Edit quota and status', details: 'Details', noServers: 'No servers configured', noResults: 'No matching subscriptions',
+    search: 'Search user / email', searchUsers: 'Find users', selectUser: 'Select a user', allServers: 'All servers', allStatuses: 'All statuses', filter: 'Search',
+    createHint: 'Automatically selects the least populated healthy, enabled server. Administrator activation does not require a positive balance. An existing subscription is returned unchanged.',
+    quotaGiB: 'Monthly quota (GiB)', invalidQuota: 'Enter a positive quota whose byte value does not exceed the safe integer limit.',
+    invalidHttps: 'Use an HTTPS server URL without an embedded username or password.',
+    retry: 'Retry original operation', revoke: 'Rotate subscription credentials', revokeConfirm: 'Rotation invalidates the old URL and connection credentials and disconnects old connections. All devices belonging to this user must import the subscription again. Traffic totals are preserved. Continue?',
+    confirm: 'Confirm rotation', total: 'Total subscriptions', healthyServers: 'Healthy servers', previous: 'Previous', next: 'Next', page: 'Page {page}, {total} results',
+    reasons: { balance_required: 'A positive account balance is required to activate. No payment will be deducted.', user_inactive: 'Your account is disabled and cannot activate a subscription.', no_available_server: 'No healthy, enabled server is currently available. Refresh later or contact an administrator.', already_exists: 'You already have a subscription. Refresh to view it.' },
+    states: { active: 'Active', disabled: 'Disabled', limited: 'Over quota', expired: 'Expired', provisioning: 'Provisioning', pending: 'Pending', running: 'Running', applied: 'Applied', failed: 'Failed', succeeded: 'Succeeded', allowed: 'Allowed', blocked: 'Blocked', unknown: 'Unknown', ok: 'Current', stale: 'Stale sample', gap_detected: 'Accounting gap' }
+  }
+}

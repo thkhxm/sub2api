@@ -106,6 +106,7 @@ var ProviderSet = wire.NewSet(
 	NewUserPlatformQuotaRepository,     // T14: user × platform quota
 	NewUserPlatformQuotaServiceAdapter, // T14: adapter → service.UserPlatformQuotaRepository
 	NewBalanceRequestRepository,        // PunkcodeAI: balance requests
+	NewVPNRepository,
 
 	// Cache implementations
 	NewGatewayCache,
