@@ -110,13 +110,14 @@
           {{ formatScopeName(item.model) }}
           <span class="text-[10px] opacity-70">{{ formatCountdown(item.reset_at) }}</span>
         </span>
-        <!-- 普通模型限流 -->
+        <!-- 模型不可用与配额限流分开展示，避免把主模型拒绝误认为持续生图。 -->
         <span
           v-else
           class="inline-flex items-center gap-1 rounded bg-purple-100 px-1.5 py-0.5 text-xs font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
         >
           <Icon name="exclamationTriangle" size="xs" :stroke-width="2" />
           {{ formatScopeName(item.model) }}
+          <span v-if="item.kind === 'model_unavailable'">{{ t('admin.accounts.status.modelUnavailable') }}</span>
           <span class="text-[10px] opacity-70">{{ formatCountdown(item.reset_at) }}</span>
         </span>
         <!-- Tooltip -->
@@ -128,7 +129,9 @@
               ? t('admin.accounts.status.creditsExhaustedUntil', { time: formatDateTimeToMinute(item.reset_at) })
               : item.kind === 'credits_active'
                 ? t('admin.accounts.status.modelCreditOveragesUntil', { model: formatScopeName(item.model), time: formatDateTimeToMinute(item.reset_at) })
-                : t('admin.accounts.status.modelRateLimitedUntil', { model: formatScopeName(item.model), time: formatDateTimeToMinute(item.reset_at) })
+                : item.kind === 'model_unavailable'
+                  ? t('admin.accounts.status.modelUnavailableUntil', { model: formatScopeName(item.model), time: formatDateTimeToMinute(item.reset_at) })
+                  : t('admin.accounts.status.modelRateLimitedUntil', { model: formatScopeName(item.model), time: formatDateTimeToMinute(item.reset_at) })
           }}
           <div
             class="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-900 dark:border-t-gray-700"
@@ -182,7 +185,7 @@ const isRateLimited = computed(() => {
 })
 
 type AccountModelStatusItem = {
-  kind: 'rate_limit' | 'credits_exhausted' | 'credits_active'
+  kind: 'rate_limit' | 'credits_exhausted' | 'credits_active' | 'model_unavailable'
   model: string
   reset_at: string
 }
@@ -191,7 +194,7 @@ type AccountModelStatusItem = {
 const activeModelStatuses = computed<AccountModelStatusItem[]>(() => {
   const extra = props.account.extra as Record<string, unknown> | undefined
   const modelLimits = extra?.model_rate_limits as
-    | Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
+    | Record<string, { rate_limited_at: string; rate_limit_reset_at: string; reason?: string }>
     | undefined
   const now = new Date()
   const items: AccountModelStatusItem[] = []
@@ -209,6 +212,8 @@ const activeModelStatuses = computed<AccountModelStatusItem[]>(() => {
     if (model === 'AICredits') {
       // AICredits key → 积分已用尽
       items.push({ kind: 'credits_exhausted', model, reset_at: info.rate_limit_reset_at })
+    } else if (['upstream_400_codex_plan_gated_model', 'upstream_404_model_not_found', 'upstream_image_bridge_model_unavailable'].includes(info.reason ?? '')) {
+      items.push({ kind: 'model_unavailable', model, reset_at: info.rate_limit_reset_at })
     } else if (allowOverages && !hasActiveAICredits) {
       // 普通模型限流 + overages 启用 + 积分可用 → 正在走积分
       items.push({ kind: 'credits_active', model, reset_at: info.rate_limit_reset_at })

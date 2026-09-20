@@ -276,7 +276,7 @@ func (h *CliHandler) GetApiKey(c *gin.Context) {
 //
 // 返回桌面端可见的 LLM 网关 base URL + 用户可见模型列表。
 // 模型列表通过 APIKeyService.GetAvailableGroups 拿到用户能绑的所有 group，再聚合
-// 它们的 ModelsListConfig.Models 去重后返出。
+// 它们的 ModelAllowlist.Models 去重后返出。
 func (h *CliHandler) GetLlm(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -292,7 +292,7 @@ func (h *CliHandler) GetLlm(c *gin.Context) {
 		base = "http://localhost:8080"
 	}
 
-	// 聚合用户可见模型：所有 available group 的 models_list_config.models 去重
+	// 聚合用户可见模型：所有 available group 的 model_allowlist.models 去重
 	groups, err := h.apiKeySvc.GetAvailableGroups(ctx, subject.UserID)
 	if err != nil {
 		slog.Warn("cli/llm: failed to load available groups; returning empty model list",
@@ -301,10 +301,10 @@ func (h *CliHandler) GetLlm(c *gin.Context) {
 
 	modelSet := make(map[string]struct{})
 	for _, g := range groups {
-		if !g.ModelsListConfig.Enabled {
+		if !g.ModelAllowlist.Enabled {
 			continue
 		}
-		for _, m := range g.ModelsListConfig.Models {
+		for _, m := range g.ModelAllowlist.Models {
 			m = strings.TrimSpace(m)
 			if m != "" {
 				modelSet[m] = struct{}{}

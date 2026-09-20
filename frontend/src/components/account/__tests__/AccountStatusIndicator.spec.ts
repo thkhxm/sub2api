@@ -51,6 +51,23 @@ function makeAccount(overrides: Partial<Account>): Account {
 }
 
 describe('AccountStatusIndicator', () => {
+  it.each(['upstream_400_codex_plan_gated_model', 'upstream_404_model_not_found', 'upstream_image_bridge_model_unavailable'])('将模型不可用与配额限流区分：%s', (reason) => {
+    const wrapper = mount(AccountStatusIndicator, {
+      props: { account: makeAccount({ platform: 'openai', extra: {
+        allow_overages: true,
+        model_rate_limits: { 'gpt-5.6-sol': {
+          rate_limited_at: '2026-09-09T00:00:00Z',
+          rate_limit_reset_at: '2099-09-09T00:00:00Z',
+          reason,
+        } },
+      } }) },
+      global: { stubs: { Icon: true } },
+    })
+    expect(wrapper.text()).toContain('admin.accounts.status.modelUnavailable')
+    expect(wrapper.text()).not.toContain('admin.accounts.status.modelRateLimitedUntil')
+    expect(wrapper.text()).not.toContain('⚡')
+  })
+
   it('Claude 5 模型限流时显示 Opus 和 Sonnet 的短别名', () => {
     const wrapper = mount(AccountStatusIndicator, {
       props: {

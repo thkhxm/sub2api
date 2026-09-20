@@ -310,6 +310,8 @@ gateway:
   # Use this to avoid compact failures when newer models are not yet supported by the compact endpoint.
   # 当 compact 端点暂未支持更新模型时，可通过这里降级规避失败。
   openai_compact_model: "gpt-5.4"
+  # OAuth 图片接口调用 image_generation 工具的主模型，不替换 gpt-image-*。
+  openai_images_responses_model: "gpt-5.6-sol"
   # ChatGPT Frameless Live 单会话硬上限（秒）。
   live:
     max_session_duration_seconds: 3600

@@ -83,6 +83,12 @@ func (a *Account) modelRateLimitKeysForRequest(ctx context.Context, requestedMod
 			keys = append(keys, antigravityGeminiModelRateLimitKey)
 		}
 	case PlatformOpenAI:
+		// 桥接主模型不可用只限制依赖它的 OAuth 图片请求，不误封图片模型或 API Key 通路。
+		if a.IsOpenAIOAuthLike() {
+			if mainModel := openAIImagesBridgeModelFromContext(ctx); mainModel != "" && mainModel != modelKey {
+				keys = append(keys, mainModel)
+			}
+		}
 		if openAIImageGenerationRateLimitApplies(ctx, requestedModel, modelKey) && modelKey != openAIImageGenerationRateLimitKey {
 			keys = append(keys, openAIImageGenerationRateLimitKey)
 		}

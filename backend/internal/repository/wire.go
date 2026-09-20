@@ -138,6 +138,7 @@ var ProviderSet = wire.NewSet(
 	NewRefreshTokenCache,
 	NewErrorPassthroughCache,
 	NewTLSFingerprintProfileCache,
+	NewChannelCache,
 	NewContentModerationHashCache,
 	NewAccountReauthCache, // 成员自助重授权：consumed/notify 去重（带 TTL）+ secret 首次生成锁
 
