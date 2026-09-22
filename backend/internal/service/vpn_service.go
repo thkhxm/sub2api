@@ -77,6 +77,7 @@ func (s *VPNService) SaveServer(ctx context.Context, id int64, in VPNServerInput
 		return nil, err
 	}
 	k := VPNCredentials{}
+	v := &VPNServer{ID: id}
 	if id > 0 {
 		old, err := s.repo.GetServer(ctx, id)
 		if err != nil {
@@ -89,6 +90,20 @@ func (s *VPNService) SaveServer(ctx context.Context, id int64, in VPNServerInput
 		if old.AdminUsername != in.AdminUsername && in.AdminPassword == "" {
 			return nil, ErrVPNInvalid
 		}
+		v = old
+	}
+	for _, value := range []*int64{in.TrafficQuotaBytes, in.TrafficUsedOffsetBytes} {
+		if value != nil && (*value < 0 || *value > VPNMaxQuota) {
+			return nil, ErrVPNInvalid
+		}
+	}
+	if in.TrafficQuotaBytes != nil {
+		v.TrafficQuotaBytes = *in.TrafficQuotaBytes
+	}
+	if in.TrafficUsedOffsetBytes != nil {
+		v.TrafficUsedOffsetBytes = *in.TrafficUsedOffsetBytes
+		start, _ := vpnPeriodBounds(time.Now())
+		v.TrafficOffsetPeriodStart = &start
 	}
 	if in.AdminPassword != "" {
 		k.Password = in.AdminPassword
@@ -109,14 +124,19 @@ func (s *VPNService) SaveServer(ctx context.Context, id int64, in VPNServerInput
 	if err != nil {
 		return nil, err
 	}
-	v, err := s.repo.SaveServer(ctx, &VPNServer{ID: id, Name: in.Name, BaseURL: in.BaseURL, AdminUsername: in.AdminUsername, CredentialsEncrypted: encrypted, Enabled: in.Enabled})
+	v.Name, v.BaseURL, v.AdminUsername, v.CredentialsEncrypted, v.Enabled = in.Name, in.BaseURL, in.AdminUsername, encrypted, in.Enabled
+	v, err = s.repo.SaveServer(ctx, v)
 	if err != nil {
 		return nil, err
 	}
 	return s.Probe(ctx, v.ID)
 }
 func (s *VPNService) Servers(ctx context.Context) ([]VPNServer, error) {
-	return s.repo.ListServers(ctx)
+	list, err := s.repo.ListServers(ctx)
+	for i := range list {
+		hydrateVPNServer(&list[i], time.Now())
+	}
+	return list, err
 }
 func (s *VPNService) Probe(ctx context.Context, id int64) (*VPNServer, error) {
 	v, err := s.repo.GetServer(ctx, id)
@@ -139,12 +159,28 @@ func (s *VPNService) Probe(ctx context.Context, id int64) (*VPNServer, error) {
 		meta.Healthy = false
 		message = "节点核心或流量采样暂不可用"
 	}
+	if meta != nil && meta.Traffic != nil && !validVPNNodeTraffic(meta.Traffic) {
+		meta.Traffic = nil
+	}
 	if err = s.repo.UpdateServerHealth(ctx, id, meta, message); err != nil {
 		return nil, err
 	}
-	return s.repo.GetServer(ctx, id)
+	v, err = s.repo.GetServer(ctx, id)
+	if err == nil {
+		hydrateVPNServer(v, time.Now())
+	}
+	return v, err
 }
 func (s *VPNService) hydrate(sub *VPNSubscription) error {
+	if sub.DeletedAt != nil {
+		sub.Status = "deleted"
+	} else if sub.DeleteRequestedAt != nil {
+		sub.Status = "deleting"
+	}
+	if sub.QuotaSyncNeeded && sub.DeletedAt == nil && sub.DeleteRequestedAt == nil && sub.OperationStatus != "failed" {
+		// 组额度已受理但尚未入队时，也必须让用户看到仍在同步。
+		sub.OperationStatus, sub.ApplyStatus = "pending", "pending"
+	}
 	x := sub.Snapshot
 	sub.UploadBytes = x.UploadBytes
 	sub.DownloadBytes = x.DownloadBytes
@@ -166,6 +202,7 @@ func (s *VPNService) hydrate(sub *VPNSubscription) error {
 	} else if sub.AccountingStatus == "ok" && (time.Since(*sub.SampledAt) > 30*time.Second || sub.SyncedAt == nil || time.Since(*sub.SyncedAt) > time.Minute) {
 		sub.AccountingStatus = "stale"
 	}
+	sub.SubscriptionURLs = nil
 	if sub.Status == "active" && sub.ApplyStatus == "applied" && sub.AccessState == "allowed" && sub.URLEncrypted != "" {
 		raw, err := s.cipher.Decrypt(sub.URLEncrypted)
 		if err != nil || !strings.HasPrefix(raw, "vpn-url:") {
@@ -188,12 +225,20 @@ func (s *VPNService) Mine(ctx context.Context, userID int64) (*VPNMyResponse, er
 	v, err := s.repo.GetUserSubscription(ctx, userID)
 	if err == nil {
 		r.Subscription = v
+		if v.GroupQuotaBytes > 0 {
+			r.DefaultQuotaBytes = v.GroupQuotaBytes
+		}
 		r.IneligibleReason = "already_exists"
 		return r, s.hydrate(v)
 	}
 	if !errors.Is(err, ErrVPNNotFound) {
 		return nil, err
 	}
+	group, err := s.repo.UserVPNGroup(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	r.DefaultQuotaBytes = group.QuotaBytes
 	r.CanCreate, r.IneligibleReason, err = s.repo.Eligibility(ctx, userID)
 	return r, err
 }
@@ -219,6 +264,12 @@ func (s *VPNService) Update(ctx context.Context, id, actor int64, in VPNUpdate) 
 }
 func (s *VPNService) Revoke(ctx context.Context, id, actor int64) (*VPNSubscription, error) {
 	if err := s.repo.Queue(ctx, id, actor, VPNOperationPayload{Action: "revoke"}); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
+func (s *VPNService) Delete(ctx context.Context, id, actor int64) (*VPNSubscription, error) {
+	if err := s.repo.Queue(ctx, id, actor, VPNOperationPayload{Action: "delete"}); err != nil {
 		return nil, err
 	}
 	return s.Get(ctx, id)
@@ -267,6 +318,9 @@ func (s *VPNService) sync(ctx context.Context, id int64) error {
 	sub, err := s.repo.GetSubscription(ctx, id)
 	if err != nil {
 		return err
+	}
+	if sub.DeletedAt != nil {
+		return nil
 	}
 	server, err := s.repo.GetServer(ctx, sub.ServerID)
 	if err != nil {
@@ -360,7 +414,13 @@ func (s *VPNService) process(ctx context.Context, o *VPNOperation) {
 			message = "读取同步结果失败"
 			return
 		}
-		if fresh.Snapshot.LastOperationID == o.ID && fresh.ApplyStatus == "applied" {
+		var payload VPNOperationPayload
+		if json.Unmarshal(o.Payload, &payload) != nil {
+			state, message = "failed", "VPN操作内容无效"
+			return
+		}
+		deleteApplied := payload.Action != "delete" || (fresh.Snapshot.Status == "deleted" && fresh.Snapshot.AccessState == "blocked")
+		if fresh.Snapshot.LastOperationID == o.ID && fresh.ApplyStatus == "applied" && deleteApplied {
 			state = "succeeded"
 		} else {
 			message = "等待节点实际配置生效"
@@ -384,6 +444,13 @@ func (s *VPNService) Tick(ctx context.Context) {
 		if v.Enabled && (v.LastCheckedAt == nil || time.Since(*v.LastCheckedAt) > 30*time.Second) {
 			_, _ = s.Probe(ctx, v.ID)
 		}
+	}
+	quotaIDs, _ := s.repo.QuotaSyncCandidates(ctx)
+	for _, id := range quotaIDs {
+		if ctx.Err() != nil {
+			return
+		}
+		_ = s.repo.QueueQuotaSync(ctx, id)
 	}
 	for i := 0; i < 10; i++ {
 		if ctx.Err() != nil {
@@ -409,4 +476,30 @@ func (s *VPNService) Tick(ctx context.Context) {
 			_ = s.repo.MarkSyncError(ctx, id, err.Error())
 		}
 	}
+}
+
+func (s *VPNService) Groups(ctx context.Context) ([]VPNGroup, error) {
+	return s.repo.ListVPNGroups(ctx)
+}
+func (s *VPNService) SaveGroup(ctx context.Context, id int64, in VPNGroupInput) (*VPNGroup, error) {
+	if in.Name != nil {
+		value := strings.TrimSpace(*in.Name)
+		if value == "" || len(value) > 100 {
+			return nil, ErrVPNInvalid
+		}
+		in.Name = &value
+	}
+	if in.QuotaBytes != nil && (*in.QuotaBytes <= 0 || *in.QuotaBytes > VPNMaxQuota) {
+		return nil, ErrVPNInvalid
+	}
+	if (id == 0 && (in.Name == nil || in.QuotaBytes == nil)) || (in.Name == nil && in.QuotaBytes == nil) {
+		return nil, ErrVPNInvalid
+	}
+	return s.repo.SaveVPNGroup(ctx, id, in)
+}
+func (s *VPNService) SetUserGroup(ctx context.Context, userID, groupID int64) (*VPNUserGroup, error) {
+	if userID <= 0 || groupID <= 0 {
+		return nil, ErrVPNInvalid
+	}
+	return s.repo.SetUserVPNGroup(ctx, userID, groupID)
 }

@@ -6,6 +6,9 @@ export interface VpnSubscription {
   user_email: string
   server_id: number
   server_name: string
+  group_id?: number
+  group_name?: string
+  group_quota_bytes?: number
   remote_username: string
   status: string
   apply_status: string
@@ -24,6 +27,8 @@ export interface VpnSubscription {
   last_error: string
   operation_status: string
   created_at: string
+  delete_requested_at?: string | null
+  deleted_at?: string | null
   subscription_urls: { clash: string; base64: string } | null
 }
 
@@ -41,6 +46,8 @@ export interface VpnServerInput {
   admin_password: string
   ca_pem?: string
   enabled: boolean
+  traffic_quota_bytes?: number
+  traffic_used_offset_bytes?: number
 }
 
 export interface VpnServer {
@@ -56,6 +63,28 @@ export interface VpnServer {
   pending_count: number
   last_checked_at: string | null
   created_at: string
+  traffic_quota_bytes?: number
+  traffic_used_bytes?: number | null
+  traffic_remaining_bytes?: number | null
+  traffic_period_start?: string | null
+  traffic_period_end?: string | null
+  traffic_sampled_at?: string | null
+  traffic_available_from?: string | null
+  traffic_accounting_status?: string
+  traffic_used_offset_bytes?: number
+  traffic_offset_period_start?: string | null
+}
+
+export interface VpnDailyTraffic {
+  timezone: string
+  start_date: string
+  end_date: string
+  days: Array<{ date: string; used_bytes: number | null }>
+  total_bytes: number
+  available_from: string | null
+  synced_at: string | null
+  partial: boolean
+  unavailable_servers: number
 }
 
 export interface VpnSummary {
@@ -71,6 +100,24 @@ export interface VpnSummary {
   total_servers: number
 }
 
+export interface VpnGroup {
+  id: number
+  name: string
+  quota_bytes: number
+  is_default: boolean
+  member_count: number
+  subscription_count: number
+  pending_count: number
+  failed_count: number
+}
+
+export interface VpnUserGroup {
+  user_id: number
+  group_id: number
+  group_name: string
+  quota_bytes: number
+}
+
 export const vpnAPI = {
   get: async () => (await apiClient.get<VpnSubscriptionResponse>('/vpn/subscription')).data,
   create: async () => (await apiClient.post<VpnSubscription>('/vpn/subscription')).data,
@@ -78,6 +125,16 @@ export const vpnAPI = {
 }
 
 export const adminVpnAPI = {
+  groups: async () => (await apiClient.get<VpnGroup[]>('/admin/vpn/groups')).data,
+  createGroup: async (input: { name: string; quota_bytes: number }) =>
+    (await apiClient.post<VpnGroup>('/admin/vpn/groups', input)).data,
+  updateGroup: async (id: number, input: { name?: string; quota_bytes?: number }) =>
+    (await apiClient.put<VpnGroup>(`/admin/vpn/groups/${id}`, input)).data,
+  setUserGroup: async (userId: number, groupId: number) =>
+    (await apiClient.put<VpnUserGroup>(`/admin/vpn/users/${userId}/group`, { group_id: groupId })).data,
+  delete: async (id: number) => (await apiClient.delete<VpnSubscription>(`/admin/vpn/subscriptions/${id}`)).data,
+  dailyTraffic: async (params: { start_date: string; end_date: string; server_id?: number; user_id?: number }) =>
+    (await apiClient.get<VpnDailyTraffic>('/admin/vpn/traffic/daily', { params })).data,
   servers: async () => (await apiClient.get<VpnServer[]>('/admin/vpn/servers')).data,
   saveServer: async (input: VpnServerInput, id?: number) => id
     ? (await apiClient.put<VpnServer>(`/admin/vpn/servers/${id}`, input)).data

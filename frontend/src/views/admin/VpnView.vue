@@ -29,7 +29,17 @@
               <div><dt class="text-gray-500">{{ t('vpn.assignedCount') }}</dt><dd>{{ server.assigned_count }}</dd></div>
               <div><dt class="text-gray-500">{{ t('vpn.pendingCount') }}</dt><dd>{{ server.pending_count }}</dd></div>
               <div><dt class="text-gray-500">{{ t('vpn.lastChecked') }}</dt><dd>{{ time(server.last_checked_at) }}</dd></div>
+              <div><dt class="text-gray-500">{{ t('vpn.quota') }}</dt><dd>{{ server.traffic_quota_bytes ? formatVpnBytes(server.traffic_quota_bytes) : t('vpn.notConfigured') }}</dd></div>
+              <div><dt class="text-gray-500">{{ t('vpn.used') }}</dt><dd>{{ trafficBytes(server.traffic_used_bytes) }}</dd></div>
+              <div><dt class="text-gray-500">{{ t('vpn.remaining') }}</dt><dd>{{ trafficCurrent(server) && server.traffic_quota_bytes ? trafficBytes(server.traffic_remaining_bytes) : '—' }} <span v-if="trafficCurrent(server) && server.traffic_quota_bytes && server.traffic_remaining_bytes != null && server.traffic_accounting_status === 'partial_history'" class="text-amber-600">({{ t('vpn.estimated') }})</span></dd></div>
+              <div><dt class="text-gray-500">{{ t('vpn.reset') }}</dt><dd>{{ time(server.traffic_period_end || null) }}</dd></div>
+              <div><dt class="text-gray-500">{{ t('vpn.sampled') }}</dt><dd>{{ time(server.traffic_sampled_at || null) }}</dd></div>
+              <div><dt class="text-gray-500">{{ t('vpn.accounting') }}</dt><dd>{{ state(server.traffic_accounting_status || 'unknown') }}</dd></div>
+              <div><dt class="text-gray-500">{{ t('vpn.availableFrom') }}</dt><dd>{{ time(server.traffic_available_from || null) }}</dd></div>
             </dl>
+            <p class="text-xs text-gray-500">{{ t('vpn.nodeTrafficHint') }}</p>
+            <p v-if="server.traffic_accounting_status === 'partial_history'" class="text-sm text-amber-600">{{ t('vpn.nodePartialHistory') }}</p>
+            <p v-if="!trafficCurrent(server)" class="text-xs text-amber-600">{{ t('vpn.staleNotice') }}</p>
             <p v-if="server.health_error" class="break-words text-sm text-red-600">{{ server.health_error }}</p>
             <div class="flex flex-wrap gap-2">
               <button class="btn btn-secondary" :disabled="busy" @click="openServer(server)">{{ t('vpn.editServer') }}</button>
@@ -38,6 +48,28 @@
           </article>
         </div>
       </section>
+      <section class="card space-y-4 p-5" data-testid="vpn-groups">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-lg font-semibold">{{ t('vpn.groups') }}</h2>
+          <button class="btn btn-primary" :disabled="busy || loading" @click="openGroup()">{{ t('vpn.addGroup') }}</button>
+        </div>
+        <p class="text-sm text-gray-500">{{ t('vpn.groupsHint') }}</p>
+        <p v-if="!groups.length && !loading" class="text-gray-500">{{ t('vpn.noGroups') }}</p>
+        <div class="grid gap-4 xl:grid-cols-2">
+          <div v-for="group in groups" :key="group.id" class="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-dark-700" :data-group-id="group.id">
+            <div class="flex flex-wrap items-center justify-between gap-2"><h3 class="font-semibold">{{ group.name }} <span v-if="group.is_default" class="text-sm text-primary-500">{{ t('vpn.defaultGroup') }}</span></h3><span>{{ formatVpnBytes(group.quota_bytes) }} / {{ t('vpn.month') }}</span></div>
+            <dl class="flex flex-wrap gap-x-5 gap-y-2 text-sm">
+              <div><dt class="text-gray-500">{{ t('vpn.groupMembers') }}</dt><dd>{{ group.member_count }}</dd></div>
+              <div><dt class="text-gray-500">{{ t('vpn.subscriptions') }}</dt><dd>{{ group.subscription_count }}</dd></div>
+              <div><dt class="text-gray-500">{{ t('vpn.groupPending') }}</dt><dd>{{ group.pending_count }}</dd></div>
+              <div><dt class="text-gray-500">{{ t('vpn.states.failed') }}</dt><dd :class="group.failed_count ? 'text-red-600' : ''">{{ group.failed_count }}</dd></div>
+            </dl>
+            <p v-if="group.failed_count" class="text-sm text-amber-600">{{ t('vpn.groupRetryHint') }}</p>
+            <button class="btn btn-secondary" :disabled="busy" @click="openGroup(group)">{{ t('vpn.editGroup') }}</button>
+          </div>
+        </div>
+      </section>
+      <VpnTrafficChart :servers="servers" />
       <section class="card space-y-4 p-5">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <h2 class="text-lg font-semibold">{{ t('vpn.subscriptions') }}</h2>
@@ -56,7 +88,7 @@
             <thead><tr class="border-b border-gray-200 text-gray-500 dark:border-dark-700"><th class="p-3">{{ t('vpn.selectUser') }}</th><th class="p-3">{{ t('vpn.server') }}</th><th class="p-3">{{ t('vpn.status') }}</th><th class="p-3">{{ t('vpn.used') }} / {{ t('vpn.quota') }}</th><th class="p-3">{{ t('vpn.sampled') }}</th><th class="p-3">{{ t('vpn.details') }}</th></tr></thead>
             <tbody>
               <tr v-for="item in items" :key="item.id" class="border-b border-gray-100 dark:border-dark-700">
-                <td class="p-3"><div>{{ item.user_email || `#${item.user_id}` }}</div><div class="text-xs text-gray-500">#{{ item.user_id }}</div></td>
+                <td class="p-3"><div>{{ item.user_email || `#${item.user_id}` }}</div><div class="text-xs text-gray-500">#{{ item.user_id }}<span v-if="item.group_name"> · {{ item.group_name }}</span></div></td>
                 <td class="p-3">{{ item.server_name }}</td>
                 <td class="p-3"><div>{{ state(item.status) }} · {{ state(item.apply_status) }}</div><div class="text-xs text-gray-500">{{ state(item.accounting_status) }}</div><p v-if="item.last_error" class="max-w-xs break-words text-xs text-red-600">{{ item.last_error }}</p></td>
                 <td class="whitespace-nowrap p-3">{{ formatVpnBytes(item.used_bytes) }} / {{ formatVpnBytes(item.quota_bytes) }}</td>
@@ -84,6 +116,9 @@
         <p v-if="serverId" class="text-xs text-gray-500">{{ t('vpn.passwordHint') }}</p>
         <label class="block text-sm">{{ t('vpn.caPem') }}<textarea v-model="serverForm.ca_pem" class="input mt-1 font-mono" rows="4" /></label>
         <p class="text-xs text-gray-500">{{ t('vpn.caHint') }}</p>
+        <label class="block text-sm">{{ t('vpn.nodeQuotaGiB') }}<input v-model.number="serverQuotaGiB" class="input mt-1" type="number" min="0" step="any" required /></label>
+        <label class="block text-sm">{{ t('vpn.nodeOffsetGiB') }}<input v-model.number="serverOffsetGiB" class="input mt-1" type="number" min="0" step="any" required /></label>
+        <p class="text-xs text-gray-500">{{ t('vpn.nodeOffsetHint') }}</p>
         <label class="flex items-center gap-2 text-sm"><input v-model="serverForm.enabled" type="checkbox" />{{ t('vpn.enabled') }}</label>
         <div class="flex justify-end gap-2"><button type="button" class="btn btn-secondary" :disabled="busy" @click="closeServer">{{ t('vpn.cancel') }}</button><button class="btn btn-primary" :disabled="busy">{{ t('vpn.save') }}</button></div>
       </form>
@@ -107,11 +142,17 @@
       <template v-if="selected">
         <p v-if="dialogError" role="alert" class="mb-4 text-sm text-red-600">{{ dialogError }}</p>
         <VpnSubscriptionDetails :subscription="selected" />
+        <div class="mt-5 space-y-2 border-t border-gray-200 pt-4 dark:border-dark-700">
+          <label class="block text-sm">{{ t('vpn.group') }}<select v-model.number="targetGroupId" class="input mt-1" :disabled="busy || vpnIsPending(selected) || deletionRequested(selected)"><option :value="null" disabled>{{ t('vpn.selectGroup') }}</option><option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }} · {{ formatVpnBytes(group.quota_bytes) }}</option></select></label>
+          <p class="text-xs text-gray-500">{{ t('vpn.switchGroupHint') }}</p>
+          <button class="btn btn-secondary" :disabled="busy || !targetGroup || targetGroupId === selected.group_id || vpnIsPending(selected) || deletionRequested(selected)" @click="showSwitchGroup = true">{{ t('vpn.switchGroup') }}</button>
+        </div>
         <div class="mt-5 flex flex-wrap gap-2 border-t border-gray-200 pt-4 dark:border-dark-700">
           <button class="btn btn-secondary" :disabled="busy" @click="runAction('refresh')">{{ t('vpn.refresh') }}</button>
-          <button class="btn btn-secondary" :disabled="busy || vpnIsPending(selected)" @click="openEdit">{{ t('vpn.edit') }}</button>
+          <button class="btn btn-secondary" :disabled="busy || vpnIsPending(selected) || deletionRequested(selected)" @click="openEdit">{{ t('vpn.edit') }}</button>
           <button class="btn btn-secondary" :disabled="busy || !canRetry" @click="runAction('retry')">{{ t('vpn.retry') }}</button>
-          <button class="btn btn-danger" :disabled="busy || vpnIsPending(selected)" @click="showRevoke = true">{{ t('vpn.revoke') }}</button>
+          <button class="btn btn-danger" :disabled="busy || vpnIsPending(selected) || deletionRequested(selected)" @click="showRevoke = true">{{ t('vpn.revoke') }}</button>
+          <button class="btn btn-danger" :disabled="busy || selected.status === 'deleted' || (deletionRequested(selected) && vpnIsPending(selected))" @click="showDelete = true">{{ t('vpn.deleteSubscription') }}</button>
         </div>
       </template>
     </BaseDialog>
@@ -130,6 +171,30 @@
       <p v-if="revokeError" role="alert" class="mt-3 text-sm text-red-600">{{ revokeError }}</p>
       <template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" :disabled="busy" @click="showRevoke = false">{{ t('vpn.cancel') }}</button><button class="btn btn-danger" :disabled="busy" @click="runAction('revoke')">{{ t('vpn.confirm') }}</button></div></template>
     </BaseDialog>
+    <BaseDialog :show="showDelete" :title="t('vpn.deleteSubscription')" :z-index="60" :show-close-button="!busy" :close-on-escape="!busy" @close="showDelete = false">
+      <p>{{ t('vpn.deleteConfirm') }}</p>
+      <p v-if="deleteError" role="alert" class="mt-3 text-sm text-red-600">{{ deleteError }}</p>
+      <template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" :disabled="busy" @click="showDelete = false">{{ t('vpn.cancel') }}</button><button class="btn btn-danger" :disabled="busy" @click="deleteSubscription">{{ t('vpn.confirmDelete') }}</button></div></template>
+    </BaseDialog>
+    <BaseDialog :show="showGroup" :title="t(editingGroup ? 'vpn.editGroup' : 'vpn.addGroup')" :show-close-button="!busy" :close-on-escape="!busy" @close="closeGroup">
+      <form class="space-y-4" @submit.prevent="prepareGroupSave">
+        <p v-if="groupError" role="alert" class="text-sm text-red-600">{{ groupError }}</p>
+        <label class="block text-sm">{{ t('vpn.groupName') }}<input v-model="groupName" class="input mt-1" required maxlength="100" /></label>
+        <label class="block text-sm">{{ t('vpn.quotaGiB') }}<input v-model.number="groupQuotaGiB" class="input mt-1" type="number" min="0.000000001" step="any" required /></label>
+        <p class="text-sm text-gray-500">{{ t('vpn.groupQuotaHint') }}</p>
+        <div class="flex justify-end gap-2"><button type="button" class="btn btn-secondary" :disabled="busy" @click="closeGroup">{{ t('vpn.cancel') }}</button><button class="btn btn-primary" :disabled="busy">{{ t('vpn.save') }}</button></div>
+      </form>
+    </BaseDialog>
+    <BaseDialog :show="showGroupConfirm" :title="t('vpn.confirmGroupQuota')" :z-index="60" :show-close-button="!busy" :close-on-escape="!busy" @close="showGroupConfirm = false">
+      <p>{{ t('vpn.groupQuotaConfirm', { name: editingGroup?.name, count: editingGroup?.subscription_count || 0, quota: formatVpnBytes(pendingGroupInput?.quota_bytes || 0) }) }}</p>
+      <p v-if="groupError" role="alert" class="mt-3 text-sm text-red-600">{{ groupError }}</p>
+      <template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" :disabled="busy" @click="showGroupConfirm = false">{{ t('vpn.cancel') }}</button><button class="btn btn-primary" :disabled="busy" @click="saveGroup">{{ t('vpn.confirmGroupQuota') }}</button></div></template>
+    </BaseDialog>
+    <BaseDialog :show="showSwitchGroup" :title="t('vpn.switchGroup')" :z-index="60" :show-close-button="!busy" :close-on-escape="!busy" @close="showSwitchGroup = false">
+      <p>{{ t('vpn.switchGroupConfirm', { name: targetGroup?.name, quota: formatVpnBytes(targetGroup?.quota_bytes || 0) }) }}</p>
+      <p v-if="switchGroupError" role="alert" class="mt-3 text-sm text-red-600">{{ switchGroupError }}</p>
+      <template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" :disabled="busy" @click="showSwitchGroup = false">{{ t('vpn.cancel') }}</button><button class="btn btn-primary" :disabled="busy || !targetGroup || !selected || deletionRequested(selected) || vpnIsPending(selected)" @click="switchGroup">{{ t('vpn.confirmSwitchGroup') }}</button></div></template>
+    </BaseDialog>
   </AppLayout>
 </template>
 
@@ -139,7 +204,8 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import VpnSubscriptionDetails from '@/components/vpn/VpnSubscriptionDetails.vue'
-import { adminVpnAPI, type VpnServer, type VpnServerInput, type VpnSubscription, type VpnSummary } from '@/api/vpn'
+import VpnTrafficChart from '@/components/vpn/VpnTrafficChart.vue'
+import { adminVpnAPI, type VpnGroup, type VpnServer, type VpnServerInput, type VpnSubscription, type VpnSummary } from '@/api/vpn'
 import { list as listUsers } from '@/api/admin/users'
 import { formatVpnBytes, formatVpnTime, GIB, gibToBytes, vpnError, vpnIsPending } from '@/utils/vpn'
 import { useAppStore } from '@/stores/app'
@@ -147,6 +213,18 @@ import { useAppStore } from '@/stores/app'
 const { t, te, locale } = useI18n()
 const app = useAppStore()
 const servers = ref<VpnServer[]>([])
+const groups = ref<VpnGroup[]>([])
+const showGroup = ref(false)
+const showGroupConfirm = ref(false)
+const editingGroup = ref<VpnGroup | null>(null)
+const groupName = ref('')
+const groupQuotaGiB = ref(0)
+const groupError = ref('')
+const pendingGroupInput = ref<{ name: string; quota_bytes?: number } | null>(null)
+const targetGroupId = ref<number | null>(null)
+const targetGroup = computed(() => groups.value.find(group => group.id === targetGroupId.value))
+const showSwitchGroup = ref(false)
+const switchGroupError = ref('')
 const summary = ref<VpnSummary | null>(null)
 const items = ref<VpnSubscription[]>([])
 const total = ref(0)
@@ -155,18 +233,24 @@ const pageSize = 20
 const query = ref('')
 const serverFilter = ref<number | ''>('')
 const statusFilter = ref('')
-const statuses = ['active', 'disabled', 'limited', 'expired', 'provisioning', 'failed']
+const statuses = ['active', 'disabled', 'limited', 'expired', 'provisioning', 'failed', 'deleting', 'deleted']
 const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
 const dialogError = ref('')
 const editError = ref('')
 const revokeError = ref('')
+const deleteError = ref('')
 const selected = ref<VpnSubscription | null>(null)
 const showServer = ref(false)
 const showCreate = ref(false)
 const showEdit = ref(false)
 const showRevoke = ref(false)
+const showDelete = ref(false)
+const serverQuotaGiB = ref(0)
+const serverOffsetGiB = ref(0)
+let initialServerQuota = 0
+let initialServerOffset = 0
 const serverId = ref<number>()
 const serverHasBindings = ref(false)
 const blankServer = (): VpnServerInput => ({ name: '', base_url: '', admin_username: '', admin_password: '', ca_pem: '', enabled: true })
@@ -175,12 +259,15 @@ const userQuery = ref('')
 const users = ref<Array<{ id: number; email: string }>>([])
 const createUserId = ref<number | null>(null)
 const searching = ref(false)
-const quotaGiB = ref(30)
+const quotaGiB = ref(0)
 const subscriptionEnabled = ref(true)
 let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 const state = (value: string) => te(`vpn.states.${value}`) ? t(`vpn.states.${value}`) : value || '—'
 const time = (value: string | null) => formatVpnTime(value, locale.value)
+const trafficBytes = (value?: number | null) => value == null ? '—' : formatVpnBytes(value)
+const trafficCurrent = (server: VpnServer) => ['ok', 'partial_history'].includes(server.traffic_accounting_status || '') && server.traffic_used_bytes != null && !!server.traffic_sampled_at && !!server.traffic_period_end && new Date(server.traffic_period_end).getTime() > Date.now()
+const deletionRequested = (subscription: VpnSubscription) => !!subscription.delete_requested_at || ['deleting', 'deleted'].includes(subscription.status)
 const canRetry = computed(() => !!selected.value && (['failed', 'pending'].includes(selected.value.operation_status) || selected.value.apply_status === 'failed'))
 const summaryFields = computed(() => {
   const s = summary.value
@@ -189,7 +276,7 @@ const summaryFields = computed(() => {
 
 function schedule() {
   clearTimeout(timer)
-  if (!disposed && (items.value.some(vpnIsPending) || (selected.value && vpnIsPending(selected.value)))) {
+  if (!disposed && (groups.value.some(group => group.pending_count > 0) || items.value.some(vpnIsPending) || (selected.value && vpnIsPending(selected.value)))) {
     timer = setTimeout(() => { if (!busy.value) void load(); else schedule() }, 5000)
   }
 }
@@ -198,22 +285,39 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [nodes, totals, subscriptions] = await Promise.all([
+    const [nodes, totals, subscriptions, vpnGroups] = await Promise.all([
       adminVpnAPI.servers(), adminVpnAPI.summary(),
-      adminVpnAPI.subscriptions({ page: page.value, page_size: pageSize, q: query.value || undefined, server_id: serverFilter.value || undefined, status: statusFilter.value || undefined })
+      adminVpnAPI.subscriptions({ page: page.value, page_size: pageSize, q: query.value || undefined, server_id: serverFilter.value || undefined, status: statusFilter.value || undefined }),
+      adminVpnAPI.groups()
     ])
     servers.value = nodes
+    groups.value = vpnGroups
     summary.value = totals
     items.value = subscriptions.items
     total.value = subscriptions.total
     if (selected.value) {
-      const id = selected.value.id
+      const current = selected.value
+      const id = current.id
       const visible = items.value.find(item => item.id === id)
       if (visible) selected.value = visible
       else {
         // 生效后的状态可能不再匹配筛选；详情仍按固定远端用户名跟进原订阅。
-        const detail = await adminVpnAPI.subscriptions({ page: 1, page_size: 20, q: selected.value.remote_username })
-        if (selected.value?.id === id) selected.value = detail.items.find(item => item.id === id) || selected.value
+        const detail = await adminVpnAPI.subscriptions({ page: 1, page_size: 20, q: current.remote_username })
+        let updated = detail.items.find(item => item.id === id)
+        if (!updated && deletionRequested(current)) {
+          const archived = await adminVpnAPI.subscriptions({ page: 1, page_size: 20, q: current.remote_username, status: 'deleted' })
+          updated = archived.items.find(item => item.id === id)
+        }
+        if (selected.value?.id === id) {
+          if (updated?.status === 'deleted' && statusFilter.value !== 'deleted') {
+            selected.value = null
+            showDelete.value = false
+            showEdit.value = false
+            showRevoke.value = false
+            showSwitchGroup.value = false
+            app.showSuccess(t('vpn.deletedSuccess'))
+          } else selected.value = updated || selected.value
+        }
       }
     }
   } catch (e) { error.value = vpnError(e, t('vpn.loadFailed')) }
@@ -221,7 +325,65 @@ async function load() {
 }
 function filter() { page.value = 1; void load() }
 function changePage(delta: number) { page.value += delta; void load() }
+function openGroup(group?: VpnGroup) {
+  editingGroup.value = group ? { ...group } : null
+  groupName.value = group?.name || ''
+  groupQuotaGiB.value = (group?.quota_bytes || groups.value.find(item => item.is_default)?.quota_bytes || 0) / GIB
+  groupError.value = ''
+  pendingGroupInput.value = null
+  showGroupConfirm.value = false
+  showGroup.value = true
+}
+function closeGroup() {
+  if (busy.value) return
+  showGroup.value = false
+  showGroupConfirm.value = false
+  pendingGroupInput.value = null
+}
+function prepareGroupSave() {
+  if (busy.value) return
+  const bytes = gibToBytes(groupQuotaGiB.value)
+  groupError.value = ''
+  if (!groupName.value.trim()) { groupError.value = t('vpn.invalidGroupName'); return }
+  if (bytes === null) { groupError.value = t('vpn.invalidQuota'); return }
+  const quotaChanged = !editingGroup.value || bytes !== editingGroup.value.quota_bytes
+  pendingGroupInput.value = { name: groupName.value.trim(), ...(quotaChanged ? { quota_bytes: bytes } : {}) }
+  if (editingGroup.value && quotaChanged) showGroupConfirm.value = true
+  else void saveGroup()
+}
+async function saveGroup() {
+  if (busy.value || !pendingGroupInput.value) return
+  busy.value = true
+  groupError.value = ''
+  try {
+    const input = pendingGroupInput.value
+    if (editingGroup.value) await adminVpnAPI.updateGroup(editingGroup.value.id, input)
+    else await adminVpnAPI.createGroup({ name: input.name, quota_bytes: input.quota_bytes! })
+    showGroupConfirm.value = false
+    showGroup.value = false
+    app.showSuccess(t('vpn.accepted'))
+    await load()
+  } catch (e) { groupError.value = vpnError(e, t('vpn.actionFailed')) }
+  finally { busy.value = false }
+}
+async function switchGroup() {
+  if (busy.value || !selected.value || !targetGroup.value || deletionRequested(selected.value) || vpnIsPending(selected.value)) return
+  busy.value = true
+  switchGroupError.value = ''
+  try {
+    const result = await adminVpnAPI.setUserGroup(selected.value.user_id, targetGroup.value.id)
+    updateSelected({ ...selected.value, group_id: result.group_id, group_name: result.group_name, group_quota_bytes: result.quota_bytes })
+    showSwitchGroup.value = false
+    app.showSuccess(t('vpn.accepted'))
+    await load()
+  } catch (e) { switchGroupError.value = vpnError(e, t('vpn.actionFailed')) }
+  finally { busy.value = false }
+}
 function openServer(server?: VpnServer) {
+  serverQuotaGiB.value = (server?.traffic_quota_bytes || 0) / GIB
+  serverOffsetGiB.value = server?.traffic_offset_period_start && server.traffic_offset_period_start === server.traffic_period_start ? (server.traffic_used_offset_bytes || 0) / GIB : 0
+  initialServerQuota = serverQuotaGiB.value
+  initialServerOffset = serverOffsetGiB.value
   serverId.value = server?.id
   serverHasBindings.value = !!server && (server.assigned_count > 0 || server.pending_count > 0)
   Object.assign(serverForm, blankServer(), server ? { name: server.name, base_url: server.base_url, admin_username: server.admin_username, enabled: server.enabled } : {})
@@ -235,10 +397,15 @@ async function saveServer() {
     const url = new URL(serverForm.base_url)
     if (url.protocol !== 'https:' || url.username || url.password) throw new Error()
   } catch { dialogError.value = t('vpn.invalidHttps'); return }
+  const quota = serverQuotaGiB.value === 0 ? 0 : gibToBytes(serverQuotaGiB.value)
+  const offset = serverOffsetGiB.value === 0 ? 0 : gibToBytes(serverOffsetGiB.value)
+  if (quota === null || offset === null) { dialogError.value = t('vpn.invalidNodeTraffic'); return }
   busy.value = true
   dialogError.value = ''
   try {
     const input = { ...serverForm }
+    if (!serverId.value || serverQuotaGiB.value !== initialServerQuota) input.traffic_quota_bytes = quota
+    if (!serverId.value || serverOffsetGiB.value !== initialServerOffset) input.traffic_used_offset_bytes = offset
     if (!input.ca_pem?.trim()) delete input.ca_pem
     await adminVpnAPI.saveServer(input, serverId.value)
     showServer.value = false
@@ -297,14 +464,14 @@ async function createSubscription() {
   finally { busy.value = false }
 }
 function openEdit() {
-  if (!selected.value) return
+  if (!selected.value || deletionRequested(selected.value)) return
   quotaGiB.value = selected.value.quota_bytes / GIB
   subscriptionEnabled.value = selected.value.status !== 'disabled'
   editError.value = ''
   showEdit.value = true
 }
 async function saveSubscription() {
-  if (busy.value || !selected.value) return
+  if (busy.value || !selected.value || deletionRequested(selected.value)) return
   const bytes = gibToBytes(quotaGiB.value)
   if (bytes === null) { editError.value = t('vpn.invalidQuota'); return }
   busy.value = true
@@ -319,6 +486,7 @@ async function saveSubscription() {
 }
 async function runAction(action: 'refresh' | 'retry' | 'revoke') {
   if (busy.value || !selected.value) return
+  if (action === 'revoke' && deletionRequested(selected.value)) return
   busy.value = true
   dialogError.value = ''
   revokeError.value = ''
@@ -333,8 +501,23 @@ async function runAction(action: 'refresh' | 'retry' | 'revoke') {
     else dialogError.value = message
   } finally { busy.value = false }
 }
+async function deleteSubscription() {
+  if (busy.value || !selected.value) return
+  busy.value = true
+  deleteError.value = ''
+  try {
+    updateSelected(await adminVpnAPI.delete(selected.value.id))
+    showDelete.value = false
+    app.showSuccess(t('vpn.accepted'))
+    await load()
+  } catch (e) { deleteError.value = vpnError(e, t('vpn.actionFailed')) }
+  finally { busy.value = false }
+}
 watch(() => selected.value?.id, () => { dialogError.value = '' })
+watch([() => selected.value?.id, () => selected.value?.group_id], () => { targetGroupId.value = selected.value?.group_id || null })
+watch(showSwitchGroup, () => { switchGroupError.value = '' })
 watch(showRevoke, () => { revokeError.value = '' })
+watch(showDelete, () => { deleteError.value = '' })
 onMounted(() => { void load() })
 onUnmounted(() => { disposed = true; clearTimeout(timer) })
 </script>

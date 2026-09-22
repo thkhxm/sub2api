@@ -46,6 +46,7 @@ const fields = computed(() => {
   const time = (value: string | null) => formatVpnTime(value, locale.value)
   return [
     ['server', s.server_name], ['status', state(s.status)], ['applyStatus', state(s.apply_status)],
+    ...(s.group_name ? [['group', s.group_name], ['groupQuota', s.group_quota_bytes == null ? '—' : formatVpnBytes(s.group_quota_bytes)]] : []),
     ['accessState', state(s.access_state)], ['operationStatus', state(s.operation_status)], ['accounting', state(s.accounting_status)],
     ['quota', formatVpnBytes(s.quota_bytes)], ['used', formatVpnBytes(s.used_bytes)], ['remaining', formatVpnBytes(s.remaining_bytes)],
     ['upload', formatVpnBytes(s.upload_bytes)], ['download', formatVpnBytes(s.download_bytes)],

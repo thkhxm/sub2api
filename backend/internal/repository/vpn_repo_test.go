@@ -50,6 +50,14 @@ func vpnTestRepository(t *testing.T) (*vpnRepository, *sql.DB) {
 	require.NoError(t, e)
 	_, e = db.Exec(string(migration))
 	require.NoError(t, e)
+	migration, e = os.ReadFile("../../migrations/239_vpn_admin_traffic.sql")
+	require.NoError(t, e)
+	_, e = db.Exec(string(migration))
+	require.NoError(t, e)
+	migration, e = os.ReadFile("../../migrations/240_vpn_user_groups.sql")
+	require.NoError(t, e)
+	_, e = db.Exec(string(migration))
+	require.NoError(t, e)
 	return &vpnRepository{db: db}, db
 }
 func vpnTestUser(t *testing.T, db *sql.DB, balance int) int64 {

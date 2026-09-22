@@ -166,3 +166,63 @@ func (h *VPNHandler) Summary(c *gin.Context) {
 	v, e := h.svc.Summary(c.Request.Context())
 	vpnReply(c, v, e)
 }
+
+func (h *VPNHandler) AdminDelete(c *gin.Context) {
+	id := vpnID(c)
+	if id == 0 {
+		return
+	}
+	v, e := h.svc.Delete(c.Request.Context(), id, vpnActor(c))
+	vpnAccepted(c, v, e)
+}
+func (h *VPNHandler) DailyTraffic(c *gin.Context) {
+	var server, user int64
+	for key, dest := range map[string]*int64{"server_id": &server, "user_id": &user} {
+		if raw := c.Query(key); raw != "" {
+			value, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || value < 0 {
+				vpnReply(c, nil, service.ErrVPNInvalid)
+				return
+			}
+			*dest = value
+		}
+	}
+	v, e := h.svc.DailyTraffic(c.Request.Context(), service.VPNTrafficFilter{StartDate: c.Query("start_date"), EndDate: c.Query("end_date"), ServerID: server, UserID: user})
+	vpnReply(c, v, e)
+}
+
+func (h *VPNHandler) Groups(c *gin.Context) {
+	v, e := h.svc.Groups(c.Request.Context())
+	vpnReply(c, v, e)
+}
+func (h *VPNHandler) SaveGroup(c *gin.Context) {
+	var in service.VPNGroupInput
+	if c.ShouldBindJSON(&in) != nil {
+		vpnReply(c, nil, service.ErrVPNInvalid)
+		return
+	}
+	var id int64
+	if c.Param("id") != "" {
+		id = vpnID(c)
+		if id == 0 {
+			return
+		}
+	}
+	v, e := h.svc.SaveGroup(c.Request.Context(), id, in)
+	vpnReply(c, v, e)
+}
+func (h *VPNHandler) SetUserGroup(c *gin.Context) {
+	id := vpnID(c)
+	if id == 0 {
+		return
+	}
+	var in struct {
+		GroupID int64 `json:"group_id"`
+	}
+	if c.ShouldBindJSON(&in) != nil {
+		vpnReply(c, nil, service.ErrVPNInvalid)
+		return
+	}
+	v, e := h.svc.SetUserGroup(c.Request.Context(), id, in.GroupID)
+	vpnReply(c, v, e)
+}

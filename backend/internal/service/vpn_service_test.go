@@ -167,7 +167,7 @@ func TestVPNServiceOperationUnknownOutcomeReusesIdentity(t *testing.T) {
 func TestVPNServiceOperationRequiresAppliedSnapshot(t *testing.T) {
 	svc, repo, remote := vpnServiceFixture(t)
 	remote.snapshot.ApplyStatus = "pending"
-	svc.process(context.Background(), &VPNOperation{ID: remote.snapshot.LastOperationID, SubscriptionID: 1})
+	svc.process(context.Background(), &VPNOperation{ID: remote.snapshot.LastOperationID, SubscriptionID: 1, Payload: json.RawMessage(`{"action":"update"}`)})
 	require.Equal(t, "pending", repo.finishState)
 }
 func TestVPNServiceRejectsInvalidUpdate(t *testing.T) {

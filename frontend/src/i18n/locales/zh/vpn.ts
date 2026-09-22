@@ -1,7 +1,7 @@
 export default {
   vpn: {
     title: 'VPN 订阅', adminTitle: 'VPN 管理', description: '查看订阅、每月流量和连接状态',
-    policy: '每人一份订阅，默认每月 30 GiB；上海时间每月 22 日 00:00 重置，不结转。月中开通也获得完整额度。',
+    policy: '每人一份订阅，当前新订阅默认每月 {quota}；已有订阅以实际额度为准。上海时间每月 22 日 00:00 重置，不结转，月中开通也获得完整额度。',
     createPolicy: '余额大于 0 时可申请开通，不扣费。开通后余额变为 0 不影响订阅。节点自动分配，无法自行删除重建或转绑。',
     create: '开通订阅', createForUser: '为用户开通', noSubscription: '尚未开通 VPN 订阅', unavailable: '当前无法开通，请联系管理员。',
     refresh: '刷新状态', loading: '正在加载…', loadFailed: '加载失败，请重试', actionFailed: '操作失败，请重试', accepted: '申请已受理，请等待状态更新',
@@ -24,7 +24,31 @@ export default {
     invalidHttps: '节点地址必须使用 HTTPS，且不能包含用户名或密码。',
     retry: '重试原操作', revoke: '轮换订阅凭据', revokeConfirm: '轮换会使原地址和连接凭据失效，并断开旧连接。此用户所有设备都需要重新导入订阅；流量不会清零。是否继续？',
     confirm: '确认轮换', total: '订阅总数', healthyServers: '健康节点', previous: '上一页', next: '下一页', page: '第 {page} 页，共 {total} 条',
+    deleteSubscription: '删除订阅', confirmDelete: '确认删除订阅',
+    deleteConfirm: '删除会使旧订阅地址和连接凭据失效，并断开旧连接。平台账号和流量历史保留；删除成功后可再次开通。处理期间仍占用绑定，无法编辑或轮换；失败时可重试。是否继续？',
+    deletedSuccess: '订阅已删除，可以重新开通。',
+    nodeQuotaGiB: '节点月额（GiB，0 表示未配置）', nodeOffsetGiB: '本期补充已用（GiB）',
+    nodeOffsetHint: '补充升级前或统计缺口的已用量，不要重复填写已统计流量。此值只作用于保存时的本账期，换月自动失效；填写 0 可清除本期补充值。',
+    invalidNodeTraffic: '请输入大于或等于 0 的有效流量，字节值不能超过安全整数上限。', notConfigured: '未配置',
+    nodeTrafficHint: '节点流量是 VPN 统计估算（含运维账号及本期补充已用），不等同于服务商账单。',
+    estimated: '估算', nodePartialHistory: '历史统计不完整：剩余量仅按已记录流量估算，可能高于实际剩余。请结合历史覆盖起点核对，可用“本期补充已用”校准；以服务商账单为准。',
+    dailyTraffic: '每日用户流量', dateRange: '日期范围', lastDays: '近 {days} 天', trafficUserId: '平台用户 ID（可选）', allUsers: '全部用户',
+    invalidUserId: '请输入有效的正整数平台用户 ID，或留空查看全部用户。',
+    trafficHistoryHint: '默认汇总全部 VPN 账号（含运维账号）。按平台用户 ID 筛选时，仅统计该用户全部历史绑定，包含已删除订阅的历史流量。',
+    trafficIncomplete: '统计不完整：历史覆盖或采样存在缺口，合计仅包含已记录流量，缺失不代表用量为 0。',
+    trafficPartial: '部分节点暂不可用（{count} 台），合计仅包含已返回的数据。', trafficGaps: '部分日期没有历史覆盖，图中保留缺口；缺失不代表用量为 0。',
+    trafficTotal: '所选期间已统计流量', availableFrom: '历史覆盖起点', noTrafficData: '暂无可用流量记录', trafficDetails: '查看每日明细', date: '日期',
+    groups: 'VPN 用户组', group: '所属 VPN 组', groupQuota: '组目标月额', groupName: '用户组名称', defaultGroup: '默认组', month: '月',
+    addGroup: '新建用户组', editGroup: '编辑用户组', noGroups: '暂无 VPN 用户组', groupMembers: '成员数', groupPending: '同步中',
+    groupsHint: '新订阅按所属组额度开通；调整组月额会异步同步该组现有订阅，不清除已用流量。',
+    groupQuotaHint: '只修改名称不会改变已有额度。修改月额将覆盖组员订阅的个别额度设置；当已用量超过新额度时，连接可能被暂停。',
+    invalidGroupName: '请输入用户组名称。', confirmGroupQuota: '确认批量调整额度',
+    groupQuotaConfirm: '将“{name}”组的目标月额改为 {quota}，并异步应用到该组现有 {count} 份订阅（人数以提交时为准）。已用流量保留，个别额度设置将被覆盖；超出新额度的订阅可能暂停连接。是否继续？',
+    groupRetryHint: '部分订阅同步失败；请在下方用户订阅中查看错误并重试原操作。',
+    selectGroup: '选择 VPN 用户组', switchGroup: '切换用户组', confirmSwitchGroup: '确认切换用户组',
+    switchGroupHint: '切组后按目标组月额异步生效；当前已用流量保留。',
+    switchGroupConfirm: '将此用户移入“{name}”，并将现有订阅月额异步调整为 {quota}。已用流量保留，超出新额度时可能暂停连接。是否继续？',
     reasons: { balance_required: '账户余额需要大于 0 才能开通；申请不会扣费。', user_inactive: '账户已停用，无法开通。', no_available_server: '暂时没有健康且启用的可用节点，请稍后刷新或联系管理员。', already_exists: '您已经有一份订阅，请刷新查看。' },
-    states: { active: '启用', disabled: '禁用', limited: '超额', expired: '过期', provisioning: '创建中', pending: '处理中', running: '正在执行', applied: '已生效', failed: '失败', succeeded: '成功', allowed: '允许', blocked: '阻止', unknown: '未知', ok: '正常', stale: '采样滞后', gap_detected: '计量有缺口' }
+    states: { active: '启用', disabled: '禁用', limited: '超额', expired: '过期', provisioning: '创建中', deleting: '删除中', deleted: '已删除', pending: '处理中', running: '正在执行', applied: '已生效', failed: '失败', succeeded: '成功', allowed: '允许', blocked: '阻止', unknown: '未知', ok: '正常', stale: '采样滞后', gap_detected: '计量有缺口', partial_history: '历史统计不完整' }
   }
 }

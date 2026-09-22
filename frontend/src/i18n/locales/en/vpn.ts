@@ -1,8 +1,8 @@
 export default {
   vpn: {
     title: 'VPN subscription', adminTitle: 'VPN management', description: 'Subscription, monthly traffic and connection status',
-    policy: 'One subscription per person, with 30 GiB each month by default. Resets at 00:00 Shanghai time on the 22nd, with no rollover. Mid-month activation includes the full quota.',
-    createPolicy: 'A positive balance is required to apply; no payment is deducted. A later zero balance does not disable your subscription. Servers are assigned automatically. Deleting, recreating or transferring a subscription is not supported.',
+    policy: 'One subscription per person. New subscriptions currently default to {quota} per month; existing subscriptions retain their actual quota. Resets at 00:00 Shanghai time on the 22nd, with no rollover. Mid-month activation includes the full quota.',
+    createPolicy: 'A positive balance is required to apply; no payment is deducted. A later zero balance does not disable your subscription. Servers are assigned automatically. Users cannot delete or transfer their own subscription. Contact an administrator to delete it before activating again.',
     create: 'Activate subscription', createForUser: 'Activate for a user', noSubscription: 'No VPN subscription yet', unavailable: 'Activation is unavailable. Please contact an administrator.',
     refresh: 'Refresh status', loading: 'Loading…', loadFailed: 'Unable to load. Please retry.', actionFailed: 'Operation failed. Please retry.', accepted: 'Request accepted. Waiting for the status to update.',
     pendingNotice: 'Changes are being applied. This subscription still occupies your slot; do not create another one. Contact an administrator to retry a failed operation.',
@@ -24,7 +24,31 @@ export default {
     invalidHttps: 'Use an HTTPS server URL without an embedded username or password.',
     retry: 'Retry original operation', revoke: 'Rotate subscription credentials', revokeConfirm: 'Rotation invalidates the old URL and connection credentials and disconnects old connections. All devices belonging to this user must import the subscription again. Traffic totals are preserved. Continue?',
     confirm: 'Confirm rotation', total: 'Total subscriptions', healthyServers: 'Healthy servers', previous: 'Previous', next: 'Next', page: 'Page {page}, {total} results',
+    deleteSubscription: 'Delete subscription', confirmDelete: 'Confirm deletion',
+    deleteConfirm: 'Deletion invalidates the old subscription URLs and credentials and disconnects old connections. The platform account and traffic history are preserved. A new subscription can be activated after deletion succeeds. Editing and rotation are blocked during deletion; failed deletion can be retried. Continue?',
+    deletedSuccess: 'Subscription deleted. A new subscription can now be activated.',
+    nodeQuotaGiB: 'Server monthly quota (GiB, 0 means unconfigured)', nodeOffsetGiB: 'Additional usage this period (GiB)',
+    nodeOffsetHint: 'Account for usage before an upgrade or missing history without duplicating recorded usage. This value applies only to the current billing period and expires at reset. Enter 0 to clear the current adjustment.',
+    invalidNodeTraffic: 'Enter a nonnegative traffic amount whose byte value does not exceed the safe integer limit.', notConfigured: 'Not configured',
+    nodeTrafficHint: 'Server traffic is a VPN estimate including operations accounts and current usage adjustments, not the provider bill.',
+    estimated: 'Estimate', nodePartialHistory: 'History is incomplete. Remaining traffic is estimated from recorded usage and may exceed the actual remainder. Check the history start time and adjust additional usage for this period if needed. The provider bill remains authoritative.',
+    dailyTraffic: 'Daily user traffic', dateRange: 'Date range', lastDays: 'Last {days} days', trafficUserId: 'Platform user ID (optional)', allUsers: 'All users',
+    invalidUserId: 'Enter a positive, safe integer platform user ID, or leave blank for all users.',
+    trafficHistoryHint: 'All VPN accounts, including operations accounts, are included by default. Filtering by platform user ID limits results to that user’s historical bindings, including deleted subscriptions.',
+    trafficIncomplete: 'Statistics are incomplete due to historical coverage or sampling gaps. Totals only include recorded traffic; missing data does not mean zero usage.',
+    trafficPartial: 'Some servers are unavailable ({count}). Totals only include returned data.', trafficGaps: 'Some dates lack historical coverage and remain gaps in the chart. Missing data does not mean zero usage.',
+    trafficTotal: 'Recorded traffic in selected period', availableFrom: 'History available from', noTrafficData: 'No traffic records available', trafficDetails: 'View daily details', date: 'Date',
+    groups: 'VPN user groups', group: 'VPN group', groupQuota: 'Group target monthly quota', groupName: 'Group name', defaultGroup: 'Default group', month: 'month',
+    addGroup: 'Create user group', editGroup: 'Edit user group', noGroups: 'No VPN user groups', groupMembers: 'Members', groupPending: 'Syncing',
+    groupsHint: 'New subscriptions use their group quota. Changing a group quota asynchronously updates existing group subscriptions without clearing traffic usage.',
+    groupQuotaHint: 'Renaming preserves existing quotas. Changing the monthly quota overrides individual subscription quotas in this group. Connections may be paused when usage exceeds the new quota.',
+    invalidGroupName: 'Enter a group name.', confirmGroupQuota: 'Confirm bulk quota change',
+    groupQuotaConfirm: 'Change the target quota for “{name}” to {quota} and asynchronously apply it to {count} existing subscriptions (membership is evaluated at submission). Usage is preserved and individual quota overrides are replaced. Connections may be paused if usage exceeds the new quota. Continue?',
+    groupRetryHint: 'Some subscriptions failed to sync. Check their errors below and retry the original operation.',
+    selectGroup: 'Select a VPN group', switchGroup: 'Switch user group', confirmSwitchGroup: 'Confirm group change',
+    switchGroupHint: 'The target group quota applies asynchronously. Current usage is preserved.',
+    switchGroupConfirm: 'Move this user to “{name}” and asynchronously change the existing subscription quota to {quota}. Usage is preserved. Connections may be paused if usage exceeds the new quota. Continue?',
     reasons: { balance_required: 'A positive account balance is required to activate. No payment will be deducted.', user_inactive: 'Your account is disabled and cannot activate a subscription.', no_available_server: 'No healthy, enabled server is currently available. Refresh later or contact an administrator.', already_exists: 'You already have a subscription. Refresh to view it.' },
-    states: { active: 'Active', disabled: 'Disabled', limited: 'Over quota', expired: 'Expired', provisioning: 'Provisioning', pending: 'Pending', running: 'Running', applied: 'Applied', failed: 'Failed', succeeded: 'Succeeded', allowed: 'Allowed', blocked: 'Blocked', unknown: 'Unknown', ok: 'Current', stale: 'Stale sample', gap_detected: 'Accounting gap' }
+    states: { active: 'Active', disabled: 'Disabled', limited: 'Over quota', expired: 'Expired', provisioning: 'Provisioning', deleting: 'Deleting', deleted: 'Deleted', pending: 'Pending', running: 'Running', applied: 'Applied', failed: 'Failed', succeeded: 'Succeeded', allowed: 'Allowed', blocked: 'Blocked', unknown: 'Unknown', ok: 'Current', stale: 'Stale sample', gap_detected: 'Accounting gap', partial_history: 'Incomplete history' }
   }
 }

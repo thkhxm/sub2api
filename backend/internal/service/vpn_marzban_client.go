@@ -147,3 +147,13 @@ func (c *MarzbanVPNClient) User(ctx context.Context, s *VPNServer, k VPNCredenti
 	err := c.call(ctx, s, k, "GET", "/api/integration/users/"+url.PathEscape(name), nil, &r)
 	return &r, err
 }
+
+func (c *MarzbanVPNClient) Traffic(ctx context.Context, s *VPNServer, k VPNCredentials, f VPNTrafficFilter, refs []string) (*VPNRemoteTraffic, error) {
+	query := url.Values{"start_date": {f.StartDate}, "end_date": {f.EndDate}}
+	if len(refs) > 0 {
+		query.Set("owner_refs", strings.Join(refs, ","))
+	}
+	var result VPNRemoteTraffic
+	err := c.call(ctx, s, k, "GET", "/api/integration/traffic/daily?"+query.Encode(), nil, &result)
+	return &result, err
+}

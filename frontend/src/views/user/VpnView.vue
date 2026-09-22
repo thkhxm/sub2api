@@ -6,7 +6,7 @@
         <button class="btn btn-secondary" :disabled="busy || loading" @click="load(true)">{{ t('vpn.refresh') }}</button>
       </div>
       <div class="card space-y-2 p-5 text-sm text-gray-600 dark:text-gray-300">
-        <p>{{ t('vpn.policy') }}</p><p>{{ t('vpn.createPolicy') }}</p>
+        <p>{{ t('vpn.policy', { quota: data ? formatVpnBytes(data.default_quota_bytes) : '—' }) }}</p><p>{{ t('vpn.createPolicy') }}</p>
       </div>
       <p v-if="error" role="alert" class="text-red-600">{{ error }}</p>
       <p v-if="loading && !data" role="status">{{ t('vpn.loading') }}</p>
