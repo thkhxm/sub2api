@@ -352,7 +352,8 @@ describe('VPN administrator flow', () => {
     const remaining = node.findAll('dl > div').find(item => item.text().startsWith('vpn.remaining'))!
     expect(remaining.text()).toContain('1000.00 GiB')
     expect(remaining.text()).toContain('vpn.estimated')
-    expect(node.text()).toContain('vpn.nodePartialHistory')
+    expect(node.text()).not.toContain('vpn.nodeTrafficHint')
+    expect(node.text()).not.toContain('vpn.nodePartialHistory')
     const coverage = node.findAll('dl > div').find(item => item.text().startsWith('vpn.availableFrom'))!
     expect(coverage.find('dd').text()).toContain('2026')
     expect(coverage.find('dd').text()).not.toBe('—')

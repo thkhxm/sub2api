@@ -18,30 +18,51 @@
         </div>
         <p v-if="!servers.length && !loading" class="text-gray-500">{{ t('vpn.noServers') }}</p>
         <div class="grid gap-4 xl:grid-cols-2">
-          <article v-for="server in servers" :key="server.id" class="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-dark-700">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <h3 class="font-semibold">{{ server.name }}</h3>
-              <span :class="server.enabled && server.healthy ? 'text-emerald-600' : 'text-amber-600'">{{ t(server.enabled ? 'vpn.enabled' : 'vpn.disabled') }} · {{ t(server.healthy ? 'vpn.healthy' : 'vpn.unhealthy') }}</span>
+          <article v-for="server in servers" :key="server.id" :aria-label="server.name" class="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800/50">
+            <div class="flex flex-col items-start gap-3 px-5 pt-5 sm:flex-row sm:justify-between">
+              <div class="w-full min-w-0 flex-1 sm:w-auto">
+                <h3 class="break-words font-semibold text-gray-900 dark:text-gray-100">{{ server.name }}</h3>
+                <p class="mt-1.5 break-all text-xs leading-5 text-gray-500 dark:text-gray-400">{{ server.base_url }}</p>
+              </div>
+              <span class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset" :class="!server.enabled ? 'bg-gray-100 text-gray-600 ring-gray-200 dark:bg-dark-700 dark:text-gray-400 dark:ring-dark-600' : server.healthy ? 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:ring-emerald-800' : 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:ring-amber-800'">
+                <span aria-hidden="true" class="h-1.5 w-1.5 rounded-full bg-current"></span>
+                {{ t(server.enabled ? 'vpn.enabled' : 'vpn.disabled') }} · {{ t(server.healthy ? 'vpn.healthy' : 'vpn.unhealthy') }}
+              </span>
             </div>
-            <p class="break-all text-sm text-gray-500">{{ server.base_url }}</p>
-            <dl class="flex flex-wrap gap-x-5 gap-y-2 text-sm">
-              <div><dt class="text-gray-500">{{ t('vpn.personalCount') }}</dt><dd>{{ server.personal_user_count }}</dd></div>
-              <div><dt class="text-gray-500">{{ t('vpn.assignedCount') }}</dt><dd>{{ server.assigned_count }}</dd></div>
-              <div><dt class="text-gray-500">{{ t('vpn.pendingCount') }}</dt><dd>{{ server.pending_count }}</dd></div>
-              <div><dt class="text-gray-500">{{ t('vpn.lastChecked') }}</dt><dd>{{ time(server.last_checked_at) }}</dd></div>
-              <div><dt class="text-gray-500">{{ t('vpn.quota') }}</dt><dd>{{ server.traffic_quota_bytes ? formatVpnBytes(server.traffic_quota_bytes) : t('vpn.notConfigured') }}</dd></div>
-              <div><dt class="text-gray-500">{{ t('vpn.used') }}</dt><dd>{{ trafficBytes(server.traffic_used_bytes) }}</dd></div>
-              <div><dt class="text-gray-500">{{ t('vpn.remaining') }}</dt><dd>{{ trafficCurrent(server) && server.traffic_quota_bytes ? trafficBytes(server.traffic_remaining_bytes) : '—' }} <span v-if="trafficCurrent(server) && server.traffic_quota_bytes && server.traffic_remaining_bytes != null && server.traffic_accounting_status === 'partial_history'" class="text-amber-600">({{ t('vpn.estimated') }})</span></dd></div>
-              <div><dt class="text-gray-500">{{ t('vpn.reset') }}</dt><dd>{{ time(server.traffic_period_end || null) }}</dd></div>
-              <div><dt class="text-gray-500">{{ t('vpn.sampled') }}</dt><dd>{{ time(server.traffic_sampled_at || null) }}</dd></div>
-              <div><dt class="text-gray-500">{{ t('vpn.accounting') }}</dt><dd>{{ state(server.traffic_accounting_status || 'unknown') }}</dd></div>
-              <div><dt class="text-gray-500">{{ t('vpn.availableFrom') }}</dt><dd>{{ time(server.traffic_available_from || null) }}</dd></div>
-            </dl>
-            <p class="text-xs text-gray-500">{{ t('vpn.nodeTrafficHint') }}</p>
-            <p v-if="server.traffic_accounting_status === 'partial_history'" class="text-sm text-amber-600">{{ t('vpn.nodePartialHistory') }}</p>
-            <p v-if="!trafficCurrent(server)" class="text-xs text-amber-600">{{ t('vpn.staleNotice') }}</p>
-            <p v-if="server.health_error" class="break-words text-sm text-red-600">{{ server.health_error }}</p>
-            <div class="flex flex-wrap gap-2">
+            <div class="space-y-4 p-5">
+              <dl class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div class="min-w-0 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/50">
+                  <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('vpn.quota') }}</dt>
+                  <dd class="mt-2 break-words text-base font-semibold tracking-tight text-gray-900 tabular-nums dark:text-gray-100 sm:text-lg">{{ server.traffic_quota_bytes ? formatVpnBytes(server.traffic_quota_bytes) : t('vpn.notConfigured') }}</dd>
+                </div>
+                <div class="min-w-0 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-900/50">
+                  <dt class="text-xs text-gray-500 dark:text-gray-400">{{ t('vpn.used') }}</dt>
+                  <dd class="mt-2 break-words text-base font-semibold tracking-tight text-gray-900 tabular-nums dark:text-gray-100 sm:text-lg">{{ trafficBytes(server.traffic_used_bytes) }}</dd>
+                </div>
+                <div class="col-span-2 min-w-0 rounded-xl border border-primary-200 bg-primary-50 p-3 dark:border-primary-800 dark:bg-primary-900/20 sm:col-span-1">
+                  <dt class="flex flex-wrap items-center gap-1.5 text-xs text-primary-700 dark:text-primary-300">
+                    {{ t('vpn.remaining') }}
+                    <span v-if="trafficCurrent(server) && server.traffic_quota_bytes && server.traffic_remaining_bytes != null && server.traffic_accounting_status === 'partial_history'" class="rounded bg-white/80 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-dark-800 dark:text-amber-400">{{ t('vpn.estimated') }}</span>
+                  </dt>
+                  <dd class="mt-2 break-words text-base font-semibold tracking-tight text-primary-700 tabular-nums dark:text-primary-300 sm:text-lg">{{ trafficCurrent(server) && server.traffic_quota_bytes ? trafficBytes(server.traffic_remaining_bytes) : '—' }}</dd>
+                </div>
+              </dl>
+              <dl class="grid grid-cols-3 divide-x divide-gray-200 rounded-xl border border-gray-200 bg-gray-50/80 py-3 text-center dark:divide-dark-700 dark:border-dark-700 dark:bg-dark-900/30">
+                <div class="flex min-w-0 flex-col px-2"><dt class="text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('vpn.personalCount') }}</dt><dd class="mt-auto pt-1 text-base font-semibold text-gray-900 tabular-nums dark:text-gray-100">{{ server.personal_user_count }}</dd></div>
+                <div class="flex min-w-0 flex-col px-2"><dt class="text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('vpn.assignedCount') }}</dt><dd class="mt-auto pt-1 text-base font-semibold text-gray-900 tabular-nums dark:text-gray-100">{{ server.assigned_count }}</dd></div>
+                <div class="flex min-w-0 flex-col px-2"><dt class="text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('vpn.pendingCount') }}</dt><dd class="mt-auto pt-1 text-base font-semibold text-gray-900 tabular-nums dark:text-gray-100">{{ server.pending_count }}</dd></div>
+              </dl>
+              <dl class="grid grid-cols-1 gap-x-6 gap-y-3 text-xs sm:grid-cols-2">
+                <div><dt class="text-gray-500 dark:text-gray-400">{{ t('vpn.lastChecked') }}</dt><dd class="mt-1 break-words font-medium text-gray-700 tabular-nums dark:text-gray-300">{{ time(server.last_checked_at) }}</dd></div>
+                <div><dt class="text-gray-500 dark:text-gray-400">{{ t('vpn.sampled') }}</dt><dd class="mt-1 break-words font-medium text-gray-700 tabular-nums dark:text-gray-300">{{ time(server.traffic_sampled_at || null) }}</dd></div>
+                <div><dt class="text-gray-500 dark:text-gray-400">{{ t('vpn.reset') }}</dt><dd class="mt-1 break-words font-medium text-gray-700 tabular-nums dark:text-gray-300">{{ time(server.traffic_period_end || null) }}</dd></div>
+                <div><dt class="text-gray-500 dark:text-gray-400">{{ t('vpn.availableFrom') }}</dt><dd class="mt-1 break-words font-medium text-gray-700 tabular-nums dark:text-gray-300">{{ time(server.traffic_available_from || null) }}</dd></div>
+                <div class="flex flex-wrap items-center gap-2 sm:col-span-2"><dt class="text-gray-500 dark:text-gray-400">{{ t('vpn.accounting') }}</dt><dd class="rounded-md bg-gray-100 px-2 py-1 font-medium text-gray-600 dark:bg-dark-700 dark:text-gray-300">{{ state(server.traffic_accounting_status || 'unknown') }}</dd></div>
+              </dl>
+              <p v-if="!trafficCurrent(server)" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400">{{ t('vpn.staleNotice') }}</p>
+              <p v-if="server.health_error" class="break-words rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">{{ server.health_error }}</p>
+            </div>
+            <div class="mt-auto flex flex-wrap justify-end gap-2 border-t border-gray-200 bg-gray-50/80 px-5 py-3 dark:border-dark-700 dark:bg-dark-900/30">
               <button class="btn btn-secondary" :disabled="busy" @click="openServer(server)">{{ t('vpn.editServer') }}</button>
               <button class="btn btn-secondary" :disabled="busy" @click="probe(server.id)">{{ t('vpn.probe') }}</button>
             </div>
