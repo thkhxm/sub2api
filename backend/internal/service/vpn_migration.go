@@ -24,6 +24,7 @@ type VPNInitialUsage struct {
 
 // 迁移阶段与操作一同持久化；任何远端请求重放都使用原来的操作编号。
 type VPNMigration struct {
+	ManualTarget     bool             `json:"manual_target,omitempty"`
 	SourceServerID   int64            `json:"source_server_id"`
 	SourceOwnerRef   string           `json:"source_owner_ref"`
 	SourceUsername   string           `json:"source_username"`
@@ -160,6 +161,9 @@ func (s *VPNService) processMigration(ctx context.Context, o *VPNOperation, m *V
 		return fail(err)
 	}
 	if !target.Enabled || m.TargetRetired {
+		if m.ManualTarget && !target.Enabled && !m.TargetDispatched {
+			return "pending", "所选目标节点已禁用，等待该节点恢复后继续"
+		}
 		if m.TargetDispatched && !m.TargetRetired {
 			x, err := s.migrationRemote(ctx, o, target, m.TargetUsername, VPNOperationPayload{
 				OperationID: migrationOperationID(o.ID, "retire-"+m.TargetOwnerRef), OwnerRef: m.TargetOwnerRef, Action: "delete"})

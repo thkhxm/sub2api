@@ -119,7 +119,7 @@ func (h *VPNHandler) AdminList(c *gin.Context) {
 	page, _ := strconv.Atoi(c.Query("page"))
 	size, _ := strconv.Atoi(c.Query("page_size"))
 	server, _ := strconv.ParseInt(c.Query("server_id"), 10, 64)
-	v, e := h.svc.List(c.Request.Context(), service.VPNFilter{Page: page, PageSize: size, Query: c.Query("q"), Status: c.Query("status"), ServerID: server})
+	v, e := h.svc.List(c.Request.Context(), service.VPNFilter{Page: page, PageSize: size, Query: c.Query("q"), Status: c.Query("status"), ServerID: server, SortBy: c.Query("sort_by"), SortOrder: c.Query("sort_order")})
 	vpnReply(c, v, e)
 }
 func (h *VPNHandler) AdminCreate(c *gin.Context) {
@@ -151,7 +151,14 @@ func (h *VPNHandler) AdminRevoke(c *gin.Context) {
 	if id == 0 {
 		return
 	}
-	v, e := h.svc.Revoke(c.Request.Context(), id, vpnActor(c))
+	var in struct {
+		TargetServerID int64 `json:"target_server_id"`
+	}
+	if c.ShouldBindJSON(&in) != nil || in.TargetServerID <= 0 {
+		vpnReply(c, nil, service.ErrVPNInvalid)
+		return
+	}
+	v, e := h.svc.Rotate(c.Request.Context(), id, vpnActor(c), in.TargetServerID)
 	vpnAccepted(c, v, e)
 }
 func (h *VPNHandler) AdminRefresh(c *gin.Context) {

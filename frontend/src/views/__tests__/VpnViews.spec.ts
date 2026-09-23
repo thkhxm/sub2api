@@ -9,22 +9,23 @@ import { GIB, gibToBytes, vpnIsAvailable } from '@/utils/vpn'
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(), create: vi.fn(), refresh: vi.fn(), servers: vi.fn(), summary: vi.fn(), subscriptions: vi.fn(),
-  saveServer: vi.fn(), probe: vi.fn(), adminCreate: vi.fn(), update: vi.fn(), action: vi.fn(), delete: vi.fn(),
+  saveServer: vi.fn(), probe: vi.fn(), adminCreate: vi.fn(), update: vi.fn(), action: vi.fn(), rotate: vi.fn(), delete: vi.fn(),
   groups: vi.fn(), createGroup: vi.fn(), updateGroup: vi.fn(), setUserGroup: vi.fn(),
   ensureEgress: vi.fn(),
-  listUsers: vi.fn(), copy: vi.fn(), success: vi.fn()
+  listUsers: vi.fn(), copy: vi.fn(), success: vi.fn(), apiPost: vi.fn(), apiGet: vi.fn()
 }))
 vi.mock('@/api/vpn', () => ({
   vpnAPI: { get: mocks.get, create: mocks.create, refresh: mocks.refresh },
-  adminVpnAPI: { servers: mocks.servers, summary: mocks.summary, subscriptions: mocks.subscriptions, saveServer: mocks.saveServer, probe: mocks.probe, create: mocks.adminCreate, update: mocks.update, action: mocks.action, delete: mocks.delete, groups: mocks.groups, createGroup: mocks.createGroup, updateGroup: mocks.updateGroup, setUserGroup: mocks.setUserGroup, ensureEgress: mocks.ensureEgress }
+  adminVpnAPI: { servers: mocks.servers, summary: mocks.summary, subscriptions: mocks.subscriptions, saveServer: mocks.saveServer, probe: mocks.probe, create: mocks.adminCreate, update: mocks.update, action: mocks.action, rotate: mocks.rotate, delete: mocks.delete, groups: mocks.groups, createGroup: mocks.createGroup, updateGroup: mocks.updateGroup, setUserGroup: mocks.setUserGroup, ensureEgress: mocks.ensureEgress }
 }))
+vi.mock('@/api/client', () => ({ apiClient: { post: mocks.apiPost, get: mocks.apiGet } }))
 vi.mock('@/api/admin/users', () => ({ list: mocks.listUsers, default: { list: mocks.listUsers } }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div><slot /></div>' } }))
 vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard: mocks.copy }) }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.success }) }))
 vi.mock('vue-i18n', async () => ({
   ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'),
-  useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => key === 'vpn.policy' ? `${key}:${params?.quota}` : key, te: (key: string) => key.startsWith('vpn.states.') || key === 'vpn.reasons.balance_required', locale: ref('zh') })
+  useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => key === 'vpn.policy' ? `${key}:${params?.quota}` : key === 'vpn.usageProgress' ? `${params?.used} / ${params?.quota} (${params?.percent})` : key, te: (key: string) => key.startsWith('vpn.states.') || key === 'vpn.reasons.balance_required', locale: ref('zh') })
 }))
 
 const subscription = (overrides: Partial<VpnSubscription> = {}): VpnSubscription => ({
@@ -76,6 +77,7 @@ beforeEach(() => {
   mocks.listUsers.mockResolvedValue({ items: [{ id: 17, email: 'person@example.com' }] })
   mocks.update.mockResolvedValue(subscription())
   mocks.action.mockResolvedValue(subscription())
+  mocks.rotate.mockResolvedValue(subscription())
   mocks.adminCreate.mockResolvedValue(subscription())
   mocks.ensureEgress.mockResolvedValue(egress())
 })
@@ -382,6 +384,70 @@ describe('VPN operations subscription', () => {
 })
 
 describe('VPN administrator flow', () => {
+  it('sends explicit rotation targets and server-side sort parameters through the API', async () => {
+    const { adminVpnAPI } = await vi.importActual<typeof import('@/api/vpn')>('@/api/vpn')
+    mocks.apiPost.mockResolvedValue({ data: subscription() })
+    mocks.apiGet.mockResolvedValue({ data: { items: [], total: 0 } })
+    await adminVpnAPI.rotate(8, 4)
+    expect(mocks.apiPost).toHaveBeenCalledWith('/admin/vpn/subscriptions/8/revoke', { target_server_id: 4 })
+    const params = { page: 2, page_size: 20, sort_by: 'used_bytes' as const, sort_order: 'asc' as const }
+    await adminVpnAPI.subscriptions(params)
+    expect(mocks.apiGet).toHaveBeenCalledWith('/admin/vpn/subscriptions', { params })
+  })
+  it.each([
+    { used: 0, quota: 30 * GIB, percent: '0%', width: '0%', value: '0', usedText: '0 B', quotaText: '30.00 GiB' },
+    { used: 3 * GIB, quota: 30 * GIB, percent: '10%', width: '10%', value: '10', usedText: '3.00 GiB', quotaText: '30.00 GiB' },
+    { used: 45 * GIB, quota: 30 * GIB, percent: '150%', width: '100%', value: '100', usedText: '45.00 GiB', quotaText: '30.00 GiB' },
+    { used: 3 * GIB, quota: 0, percent: '—', width: '0%', value: undefined, usedText: '3.00 GiB', quotaText: '0 B' },
+    { used: null, quota: 30 * GIB, percent: '—', width: '0%', value: undefined, usedText: '—', quotaText: '30.00 GiB' },
+    { used: -1, quota: 30 * GIB, percent: '—', width: '0%', value: undefined, usedText: '—', quotaText: '30.00 GiB' },
+    { used: Infinity, quota: 30 * GIB, percent: '—', width: '0%', value: undefined, usedText: '—', quotaText: '30.00 GiB' },
+    { used: 0, quota: NaN, percent: '—', width: '0%', value: undefined, usedText: '0 B', quotaText: '—' }
+  ])('renders safe usage progress for $used of $quota', async ({ used, quota, percent, width, value, usedText, quotaText }) => {
+    mocks.subscriptions.mockResolvedValue({ items: [subscription({ used_bytes: used as number, quota_bytes: quota })], total: 1 })
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    const usage = wrapper.find('[data-testid="vpn-usage"]')
+    expect(usage.text()).toContain(`${usedText} / ${quotaText}`)
+    expect(usage.text()).toContain(percent)
+    const progress = usage.find('[role="progressbar"]')
+    expect(progress.attributes('aria-valuenow')).toBe(value)
+    expect(progress.attributes('aria-valuemin')).toBe('0')
+    expect(progress.attributes('aria-valuemax')).toBe('100')
+    expect(progress.attributes('aria-valuetext')).toBe(`${usedText} / ${quotaText} (${percent})`)
+    expect((progress.find('div').element as HTMLElement).style.width).toBe(width)
+    expect(usage.html()).not.toMatch(/NaN|Infinity|-1 B/)
+  })
+  it('sorts across server pages, resets the page and preserves filters and polling order', async () => {
+    vi.useFakeTimers()
+    const initial = subscription({ apply_status: 'pending', operation_status: 'running' })
+    mocks.subscriptions.mockResolvedValue({ items: [initial], total: 45 })
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    expect(mocks.subscriptions).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort_by: 'created_at', sort_order: 'desc' }))
+    const form = wrapper.find('form')
+    await form.find('input').setValue('person')
+    await form.findAll('select')[0].setValue('3')
+    await form.findAll('select')[1].setValue('active')
+    await form.trigger('submit')
+    await flushPromises()
+    await button(wrapper, 'vpn.next').trigger('click')
+    await flushPromises()
+    expect(mocks.subscriptions).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 }))
+    // 保留后端返回顺序，不能再按当前页自行排序。
+    mocks.subscriptions.mockResolvedValue({ items: [initial, subscription({ id: 9, user_email: 'second@example.com', used_bytes: GIB })], total: 45 })
+    await wrapper.find('[data-testid="vpn-sort"]').setValue('used_bytes_asc')
+    await flushPromises()
+    const expected = { page: 1, page_size: 20, q: 'person', server_id: 3, status: 'active', sort_by: 'used_bytes', sort_order: 'asc' }
+    expect(mocks.subscriptions).toHaveBeenLastCalledWith(expected)
+    expect(wrapper.findAll('tbody tr')[0].text()).toContain('person@example.com')
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(mocks.subscriptions).toHaveBeenLastCalledWith(expected)
+    await wrapper.find('[data-testid="vpn-sort"]').setValue('used_bytes_desc')
+    await flushPromises()
+    expect(mocks.subscriptions).toHaveBeenLastCalledWith({ ...expected, sort_order: 'desc' })
+  })
   it('keeps a deletion visible until the archived result confirms success', async () => {
     vi.useFakeTimers()
     const deleting = subscription({ status: 'deleting', apply_status: 'pending', operation_status: 'pending', delete_requested_at: '2026-09-22T00:00:00Z' })
@@ -454,6 +520,25 @@ describe('VPN administrator flow', () => {
     await dialog.find('form').trigger('submit')
     await flushPromises()
     expect(mocks.saveServer.mock.calls[0][0]).not.toHaveProperty('traffic_used_offset_bytes')
+  })
+  it.each([
+    { allocated: null, ratio: null, amount: '—', percent: '—', width: '0%', value: undefined },
+    { allocated: 150 * GIB, ratio: 1.5, amount: '150.00 GiB', percent: '150%', width: '100%', value: '100' }
+  ])('shows allocated node quota independently of actual usage for ratio $ratio', async ({ allocated, ratio, amount, percent, width, value }) => {
+    mocks.servers.mockResolvedValue([{ ...server, traffic_quota_bytes: 100 * GIB, traffic_used_bytes: GIB, allocation_quota_bytes: allocated, allocation_ratio: ratio }])
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    const allocation = wrapper.find('[data-testid="vpn-node-allocation"]')
+    expect(allocation.text()).toContain('vpn.allocatedQuota / vpn.quota')
+    expect(allocation.text()).toContain(`${amount} / 100.00 GiB`)
+    expect(allocation.text()).toContain(percent)
+    const progress = allocation.find('[role="progressbar"]')
+    expect(progress.attributes('aria-label')).toBe('vpn.allocatedQuota')
+    expect(progress.attributes('aria-valuenow')).toBe(value)
+    expect(progress.attributes('aria-valuetext')).toBe(`${amount} / 100.00 GiB (${percent})`)
+    expect((progress.find('div').element as HTMLElement).style.width).toBe(width)
+    const actualUsed = wrapper.find('article').findAll('dl > div').find(item => item.text().startsWith('vpn.used'))!
+    expect(actualUsed.find('dd').text()).toBe('1.00 GiB')
   })
   it('does not present unknown or expired node telemetry as a full remaining quota', async () => {
     mocks.servers.mockResolvedValue([{ ...server, traffic_quota_bytes: 1024 * GIB, traffic_remaining_bytes: 1024 * GIB, traffic_accounting_status: 'ok', traffic_sampled_at: '2026-01-01T00:00:00Z', traffic_period_end: '2026-02-01T00:00:00Z' }])
@@ -535,31 +620,79 @@ describe('VPN administrator flow', () => {
     await flushPromises()
     expect(mocks.update).toHaveBeenCalledWith(8, { quota_bytes: 45.5 * GIB, enabled: false })
   })
-  it('requires explicit confirmation to rotate credentials and preserves errors', async () => {
-    mocks.action.mockRejectedValue({ status: 409, message: '操作处理中' })
+  it('requires a manual target and retains the chosen node after a capacity failure', async () => {
+    mocks.rotate.mockRejectedValueOnce({ status: 409, message: '目标节点容量不足' })
     const wrapper = view(AdminVpnView)
     await flushPromises()
     await button(wrapper, 'vpn.details').trigger('click')
     await button(wrapper, 'vpn.revoke').trigger('click')
-    expect(mocks.action).not.toHaveBeenCalled()
+    expect(mocks.rotate).not.toHaveBeenCalled()
+    const radio = wrapper.find('[data-testid="vpn-rotation"] input[type="radio"]')
+    expect((radio.element as HTMLInputElement).checked).toBe(false)
+    expect(button(wrapper, 'vpn.confirm').attributes('disabled')).toBeDefined()
+    await button(wrapper, 'vpn.confirm').trigger('click')
+    expect(mocks.rotate).not.toHaveBeenCalled()
+    await radio.setValue(true)
     expect(wrapper.text()).toContain('vpn.revokeConfirm')
     await button(wrapper, 'vpn.confirm').trigger('click')
     await flushPromises()
-    expect(mocks.action).toHaveBeenCalledWith(8, 'revoke')
-    expect(wrapper.text()).toContain('操作处理中')
+    expect(mocks.rotate).toHaveBeenCalledWith(8, 3)
+    expect(wrapper.text()).toContain('目标节点容量不足')
+    expect((radio.element as HTMLInputElement).checked).toBe(true)
+    await button(wrapper, 'vpn.confirm').trigger('click')
+    await flushPromises()
+    expect(mocks.rotate).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-testid="vpn-rotation"]').exists()).toBe(false)
+    await button(wrapper, 'vpn.revoke').trigger('click')
+    expect((wrapper.find('[data-testid="vpn-rotation"] input[type="radio"]').element as HTMLInputElement).checked).toBe(false)
+    expect(mocks.action).not.toHaveBeenCalled()
   })
-  it('explains migration before rotating a subscription on its disabled source node', async () => {
-    mocks.servers.mockResolvedValue([{ ...server, id: 4, name: 'Destination' }, { ...server, enabled: false }])
+  it('explains migration to the manually selected server and disables unhealthy or disabled targets', async () => {
+    mocks.servers.mockResolvedValue([{ ...server, id: 4, name: 'Destination', traffic_used_bytes: 20 * GIB, traffic_quota_bytes: 100 * GIB, allocation_quota_bytes: 60 * GIB, allocation_available_bytes: 40 * GIB, allocation_ratio: 0.6 }, { ...server, enabled: false }, { ...server, id: 5, healthy: false }])
     const wrapper = view(AdminVpnView)
     await flushPromises()
     await button(wrapper, 'vpn.details').trigger('click')
     await button(wrapper, 'vpn.revoke').trigger('click')
+    const target = wrapper.find('[data-testid="vpn-rotation"]')
+    const radios = target.findAll('input[type="radio"]')
+    expect(radios[1].attributes('disabled')).toBeDefined()
+    expect(radios[2].attributes('disabled')).toBeDefined()
+    expect(target.text()).toContain('60.00 GiB / vpn.quota 100.00 GiB · 60%')
+    expect(target.text()).toContain('20.00 GiB')
+    expect(target.text()).toContain('40.00 GiB')
+    expect(wrapper.text()).not.toContain('vpn.revokeMigrateConfirm')
+    await radios[0].setValue(true)
     expect(wrapper.text()).toContain('vpn.revokeMigrateConfirm')
     expect(wrapper.text()).not.toContain('vpn.revokeConfirm')
-    expect(mocks.action).not.toHaveBeenCalled()
+    expect(mocks.rotate).not.toHaveBeenCalled()
     await button(wrapper, 'vpn.confirm').trigger('click')
     await flushPromises()
-    expect(mocks.action).toHaveBeenCalledWith(8, 'revoke')
+    expect(mocks.rotate).toHaveBeenCalledWith(8, 4)
+  })
+  it('requires the full subscription quota for migration but no extra capacity for in-place rotation', async () => {
+    mocks.servers.mockResolvedValue([
+      { ...server, allocation_available_bytes: 0 },
+      { ...server, id: 4, name: 'Insufficient', allocation_available_bytes: 29 * GIB },
+      { ...server, id: 5, name: 'Unknown', allocation_available_bytes: null },
+      { ...server, id: 6, name: 'Exact fit', allocation_available_bytes: 30 * GIB },
+      { ...server, id: 7, name: 'Legacy' }
+    ])
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    await button(wrapper, 'vpn.details').trigger('click')
+    await button(wrapper, 'vpn.revoke').trigger('click')
+    const radios = wrapper.find('[data-testid="vpn-rotation"]').findAll('input[type="radio"]')
+    expect(radios.map(radio => radio.attributes('disabled') !== undefined)).toEqual([false, true, true, false, false])
+    expect(wrapper.text()).toContain('vpn.insufficientAllocation')
+    expect(wrapper.text()).toContain('vpn.unknownAllocation')
+    await radios[3].setValue(true)
+    expect(wrapper.text()).toContain('vpn.revokeMigrateConfirm')
+    await radios[0].setValue(true)
+    expect(wrapper.text()).toContain('vpn.revokeConfirm')
+    expect(wrapper.text()).not.toContain('vpn.revokeMigrateConfirm')
+    await button(wrapper, 'vpn.confirm').trigger('click')
+    await flushPromises()
+    expect(mocks.rotate).toHaveBeenCalledWith(8, 3)
   })
   it('retries an existing failed operation while preventing creation of a second account', async () => {
     mocks.subscriptions.mockResolvedValue({ items: [subscription({ apply_status: 'failed', operation_status: 'failed', status: 'provisioning' })], total: 1 })

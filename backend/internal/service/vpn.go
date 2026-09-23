@@ -21,32 +21,37 @@ var (
 )
 
 type VPNServer struct {
-	ID                       int64           `json:"id"`
-	Name                     string          `json:"name"`
-	BaseURL                  string          `json:"base_url"`
-	AdminUsername            string          `json:"admin_username"`
-	CredentialsEncrypted     string          `json:"-"`
-	Enabled                  bool            `json:"enabled"`
-	Healthy                  bool            `json:"healthy"`
-	HealthError              string          `json:"health_error"`
-	PersonalUserCount        int             `json:"personal_user_count"`
-	KnownOwnerRefs           []string        `json:"-"`
-	AssignedCount            int             `json:"assigned_count"`
-	PendingCount             int             `json:"pending_count"`
-	LastCheckedAt            *time.Time      `json:"last_checked_at"`
-	CreatedAt                time.Time       `json:"created_at"`
-	UpdatedAt                time.Time       `json:"-"`
-	TrafficQuotaBytes        int64           `json:"traffic_quota_bytes"`
-	TrafficUsedOffsetBytes   int64           `json:"traffic_used_offset_bytes"`
-	TrafficOffsetPeriodStart *time.Time      `json:"traffic_offset_period_start"`
-	TrafficSnapshot          *VPNNodeTraffic `json:"-"`
-	TrafficUsedBytes         *int64          `json:"traffic_used_bytes"`
-	TrafficRemainingBytes    *int64          `json:"traffic_remaining_bytes"`
-	TrafficPeriodStart       *time.Time      `json:"traffic_period_start"`
-	TrafficPeriodEnd         *time.Time      `json:"traffic_period_end"`
-	TrafficSampledAt         *time.Time      `json:"traffic_sampled_at"`
-	TrafficAvailableFrom     *time.Time      `json:"traffic_available_from"`
-	TrafficAccountingStatus  string          `json:"traffic_accounting_status"`
+	ID                       int64              `json:"id"`
+	Name                     string             `json:"name"`
+	BaseURL                  string             `json:"base_url"`
+	AdminUsername            string             `json:"admin_username"`
+	CredentialsEncrypted     string             `json:"-"`
+	Enabled                  bool               `json:"enabled"`
+	Healthy                  bool               `json:"healthy"`
+	HealthError              string             `json:"health_error"`
+	PersonalUserCount        int                `json:"personal_user_count"`
+	KnownOwnerRefs           []string           `json:"-"`
+	AssignedCount            int                `json:"assigned_count"`
+	PendingCount             int                `json:"pending_count"`
+	LastCheckedAt            *time.Time         `json:"last_checked_at"`
+	LastAssignedAt           *time.Time         `json:"-"`
+	CreatedAt                time.Time          `json:"created_at"`
+	UpdatedAt                time.Time          `json:"-"`
+	TrafficQuotaBytes        int64              `json:"traffic_quota_bytes"`
+	TrafficUsedOffsetBytes   int64              `json:"traffic_used_offset_bytes"`
+	TrafficOffsetPeriodStart *time.Time         `json:"traffic_offset_period_start"`
+	TrafficSnapshot          *VPNNodeTraffic    `json:"-"`
+	TrafficUsedBytes         *int64             `json:"traffic_used_bytes"`
+	TrafficRemainingBytes    *int64             `json:"traffic_remaining_bytes"`
+	TrafficPeriodStart       *time.Time         `json:"traffic_period_start"`
+	TrafficPeriodEnd         *time.Time         `json:"traffic_period_end"`
+	TrafficSampledAt         *time.Time         `json:"traffic_sampled_at"`
+	TrafficAvailableFrom     *time.Time         `json:"traffic_available_from"`
+	TrafficAccountingStatus  string             `json:"traffic_accounting_status"`
+	AllocationSnapshot       *VPNNodeAllocation `json:"-"`
+	AllocationQuotaBytes     *int64             `json:"allocation_quota_bytes"`
+	AllocationAvailableBytes *int64             `json:"allocation_available_bytes"`
+	AllocationRatio          *float64           `json:"allocation_ratio"`
 }
 type VPNServerInput struct {
 	Name                   string  `json:"name"`
@@ -63,16 +68,37 @@ type VPNCredentials struct {
 	CAPEM    string `json:"ca_pem"`
 }
 type VPNServerMeta struct {
-	Capabilities      []string        `json:"capabilities,omitempty"`
-	APIVersion        string          `json:"api_version"`
-	Healthy           bool            `json:"healthy"`
-	PersonalUserCount int             `json:"personal_user_count"`
-	ManagedOwnerRefs  []string        `json:"managed_owner_refs"`
-	AccountingStatus  string          `json:"accounting_status"`
-	SampledAt         *time.Time      `json:"sampled_at"`
-	Protocol          string          `json:"protocol"`
-	InboundTag        string          `json:"inbound_tag"`
-	Traffic           *VPNNodeTraffic `json:"traffic,omitempty"`
+	AllocatedQuotaBytes *int64           `json:"allocated_quota_bytes"`
+	ManagedQuotaBytes   map[string]int64 `json:"managed_quota_bytes"`
+	Capabilities        []string         `json:"capabilities,omitempty"`
+	APIVersion          string           `json:"api_version"`
+	Healthy             bool             `json:"healthy"`
+	PersonalUserCount   int              `json:"personal_user_count"`
+	ManagedOwnerRefs    []string         `json:"managed_owner_refs"`
+	AccountingStatus    string           `json:"accounting_status"`
+	SampledAt           *time.Time       `json:"sampled_at"`
+	Protocol            string           `json:"protocol"`
+	InboundTag          string           `json:"inbound_tag"`
+	Traffic             *VPNNodeTraffic  `json:"traffic,omitempty"`
+}
+
+type VPNNodeAllocation struct {
+	AllocatedQuotaBytes int64            `json:"allocated_quota_bytes"`
+	ManagedQuotaBytes   map[string]int64 `json:"managed_quota_bytes"`
+}
+
+func (v *VPNNodeAllocation) Valid() bool {
+	if v == nil || v.ManagedQuotaBytes == nil || v.AllocatedQuotaBytes < 0 || v.AllocatedQuotaBytes > VPNMaxQuota {
+		return false
+	}
+	var total int64
+	for owner, quota := range v.ManagedQuotaBytes {
+		if owner == "" || quota < 0 || quota > v.AllocatedQuotaBytes-total {
+			return false
+		}
+		total += quota
+	}
+	return true
 }
 
 type VPNNodeTraffic struct {
@@ -168,13 +194,14 @@ type VPNSubscription struct {
 	QuotaSyncNeeded   bool              `json:"quota_sync_needed"`
 }
 type VPNOperationPayload struct {
-	OperationID  string           `json:"operation_id"`
-	OwnerRef     string           `json:"owner_ref"`
-	Action       string           `json:"action"`
-	DataLimit    *int64           `json:"data_limit,omitempty"`
-	Enabled      *bool            `json:"enabled,omitempty"`
-	InitialUsage *VPNInitialUsage `json:"initial_usage,omitempty"`
-	Migration    *VPNMigration    `json:"migration,omitempty"`
+	TargetServerID int64            `json:"target_server_id,omitempty"`
+	OperationID    string           `json:"operation_id"`
+	OwnerRef       string           `json:"owner_ref"`
+	Action         string           `json:"action"`
+	DataLimit      *int64           `json:"data_limit,omitempty"`
+	Enabled        *bool            `json:"enabled,omitempty"`
+	InitialUsage   *VPNInitialUsage `json:"initial_usage,omitempty"`
+	Migration      *VPNMigration    `json:"migration,omitempty"`
 }
 type VPNOperation struct {
 	ID             string
@@ -194,9 +221,10 @@ type VPNUpdate struct {
 	Enabled    *bool  `json:"enabled"`
 }
 type VPNFilter struct {
-	Page, PageSize int
-	Query, Status  string
-	ServerID       int64
+	SortBy, SortOrder string
+	Page, PageSize    int
+	Query, Status     string
+	ServerID          int64
 }
 type VPNMyResponse struct {
 	Subscription      *VPNSubscription `json:"subscription"`

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
@@ -24,12 +25,12 @@ func vpnError(err error) error {
 	return err
 }
 
-const vpnServerColumns = `v.id,v.name,v.base_url,v.admin_username,v.credentials_encrypted,v.enabled,v.healthy,v.health_error,v.personal_user_count,v.known_owner_refs,v.last_checked_at,v.created_at,v.updated_at,(SELECT count(*) FROM vpn_subscriptions s WHERE s.server_id=v.id AND s.deleted_at IS NULL),(SELECT count(*) FROM vpn_subscriptions s WHERE s.server_id=v.id AND s.deleted_at IS NULL AND s.operation_status IN ('pending','running')),v.traffic_quota_bytes,v.traffic_used_offset_bytes,v.traffic_offset_period_start,v.traffic_snapshot`
+const vpnServerColumns = `v.id,v.name,v.base_url,v.admin_username,v.credentials_encrypted,v.enabled,v.healthy,v.health_error,v.personal_user_count,v.known_owner_refs,v.last_checked_at,v.created_at,v.updated_at,(SELECT count(*) FROM vpn_subscriptions s WHERE s.server_id=v.id AND s.deleted_at IS NULL),(SELECT count(*) FROM vpn_subscriptions s WHERE s.server_id=v.id AND s.deleted_at IS NULL AND s.operation_status IN ('pending','running')),v.traffic_quota_bytes,v.traffic_used_offset_bytes,v.traffic_offset_period_start,v.traffic_snapshot,v.allocation_snapshot,v.last_assigned_at`
 
 func scanVPNServer(row vpnScanner) (*service.VPNServer, error) {
 	var v service.VPNServer
-	var refs, traffic []byte
-	err := row.Scan(&v.ID, &v.Name, &v.BaseURL, &v.AdminUsername, &v.CredentialsEncrypted, &v.Enabled, &v.Healthy, &v.HealthError, &v.PersonalUserCount, &refs, &v.LastCheckedAt, &v.CreatedAt, &v.UpdatedAt, &v.AssignedCount, &v.PendingCount, &v.TrafficQuotaBytes, &v.TrafficUsedOffsetBytes, &v.TrafficOffsetPeriodStart, &traffic)
+	var refs, traffic, allocation []byte
+	err := row.Scan(&v.ID, &v.Name, &v.BaseURL, &v.AdminUsername, &v.CredentialsEncrypted, &v.Enabled, &v.Healthy, &v.HealthError, &v.PersonalUserCount, &refs, &v.LastCheckedAt, &v.CreatedAt, &v.UpdatedAt, &v.AssignedCount, &v.PendingCount, &v.TrafficQuotaBytes, &v.TrafficUsedOffsetBytes, &v.TrafficOffsetPeriodStart, &traffic, &allocation, &v.LastAssignedAt)
 	if err != nil {
 		return nil, vpnError(err)
 	}
@@ -38,6 +39,11 @@ func scanVPNServer(row vpnScanner) (*service.VPNServer, error) {
 	}
 	if len(traffic) > 0 {
 		if err = json.Unmarshal(traffic, &v.TrafficSnapshot); err != nil {
+			return nil, err
+		}
+	}
+	if len(allocation) > 0 {
+		if err = json.Unmarshal(allocation, &v.AllocationSnapshot); err != nil {
 			return nil, err
 		}
 	}
@@ -57,10 +63,24 @@ func (r *vpnRepository) ListServers(ctx context.Context) ([]service.VPNServer, e
 		}
 		list = append(list, *v)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return list, hydrateVPNAllocations(ctx, r.db, list, "")
 }
 func (r *vpnRepository) GetServer(ctx context.Context, id int64) (*service.VPNServer, error) {
-	return scanVPNServer(r.db.QueryRowContext(ctx, `SELECT `+vpnServerColumns+` FROM vpn_servers v WHERE v.id=$1`, id))
+	v, err := scanVPNServer(r.db.QueryRowContext(ctx, `SELECT `+vpnServerColumns+` FROM vpn_servers v WHERE v.id=$1`, id))
+	if err != nil {
+		return nil, err
+	}
+	list := []service.VPNServer{*v}
+	if err := hydrateVPNAllocations(ctx, r.db, list, ""); err != nil {
+		return nil, err
+	}
+	return &list[0], nil
 }
 func (r *vpnRepository) SaveServer(ctx context.Context, v *service.VPNServer) (*service.VPNServer, error) {
 	if v.ID == 0 {
@@ -90,7 +110,12 @@ func (r *vpnRepository) UpdateServerHealth(ctx context.Context, id int64, m *ser
 	}
 	refs, _ := json.Marshal(m.ManagedOwnerRefs)
 	traffic, _ := json.Marshal(m.Traffic)
-	_, err := r.db.ExecContext(ctx, `UPDATE vpn_servers SET healthy=$2,health_error=$3,personal_user_count=$4,known_owner_refs=$5,traffic_snapshot=$6,last_checked_at=now() WHERE id=$1`, id, m.Healthy, message, m.PersonalUserCount, string(refs), string(traffic))
+	var snapshot *service.VPNNodeAllocation
+	if m.AllocatedQuotaBytes != nil {
+		snapshot = &service.VPNNodeAllocation{AllocatedQuotaBytes: *m.AllocatedQuotaBytes, ManagedQuotaBytes: m.ManagedQuotaBytes}
+	}
+	allocation, _ := json.Marshal(snapshot)
+	_, err := r.db.ExecContext(ctx, `UPDATE vpn_servers SET healthy=$2,health_error=$3,personal_user_count=$4,known_owner_refs=$5,traffic_snapshot=$6,allocation_snapshot=$7,last_checked_at=now() WHERE id=$1`, id, m.Healthy, message, m.PersonalUserCount, string(refs), string(traffic), string(allocation))
 	return err
 }
 
@@ -116,8 +141,8 @@ func (r *vpnRepository) GetUserSubscription(ctx context.Context, id int64) (*ser
 	return scanVPNSub(r.db.QueryRowContext(ctx, `SELECT `+vpnSubColumns+vpnSubJoin+` WHERE s.user_id=$1 AND s.deleted_at IS NULL`, id))
 }
 func (r *vpnRepository) Eligibility(ctx context.Context, id int64) (bool, string, error) {
-	var active, balance, server bool
-	err := r.db.QueryRowContext(ctx, `SELECT status='active' AND deleted_at IS NULL,balance>0,EXISTS(SELECT 1 FROM vpn_servers WHERE enabled AND healthy AND last_checked_at>now()-interval '2 minutes') FROM users WHERE id=$1`, id).Scan(&active, &balance, &server)
+	var active, balance bool
+	err := r.db.QueryRowContext(ctx, `SELECT status='active' AND deleted_at IS NULL,balance>0 FROM users WHERE id=$1`, id).Scan(&active, &balance)
 	if err != nil {
 		return false, "", vpnError(err)
 	}
@@ -127,10 +152,20 @@ func (r *vpnRepository) Eligibility(ctx context.Context, id int64) (bool, string
 	if !balance {
 		return false, "balance_required", nil
 	}
-	if !server {
-		return false, "no_available_server", nil
+	group, err := r.UserVPNGroup(ctx, id)
+	if err != nil {
+		return false, "", err
 	}
-	return true, "", nil
+	servers, err := r.ListServers(ctx)
+	if err != nil {
+		return false, "", err
+	}
+	for _, server := range servers {
+		if server.Enabled && server.Healthy && server.LastCheckedAt != nil && time.Since(*server.LastCheckedAt) <= 2*time.Minute && server.AllocationAvailableBytes != nil && *server.AllocationAvailableBytes >= group.QuotaBytes {
+			return true, "", nil
+		}
+	}
+	return false, "no_available_server", nil
 }
 func (r *vpnRepository) Reserve(ctx context.Context, userID int64, admin bool, actor int64, owner string) (*service.VPNSubscription, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -170,13 +205,13 @@ func (r *vpnRepository) Reserve(ctx context.Context, userID int64, admin bool, a
 	if !admin && !balance {
 		return nil, service.ErrVPNBalance
 	}
-	serverID, err := selectVPNServer(ctx, tx, 0, 0)
-	if err != nil {
-		return nil, err
-	}
 	username := "pc_" + strings.ReplaceAll(owner, "-", "")[:28]
 	var groupID, quota int64
 	err = tx.QueryRowContext(ctx, `SELECT g.id,g.quota_bytes FROM vpn_user_groups g WHERE g.id=COALESCE((SELECT group_id FROM vpn_user_group_members WHERE user_id=$1),(SELECT id FROM vpn_user_groups WHERE is_default)) FOR SHARE`, userID).Scan(&groupID, &quota)
+	if err != nil {
+		return nil, err
+	}
+	serverID, err := selectVPNServerByQuota(ctx, tx, vpnNodeRequest{RequiredQuota: quota, OwnerRef: owner})
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +242,14 @@ func (r *vpnRepository) Queue(ctx context.Context, id, actor int64, p service.VP
 		return err
 	}
 	defer tx.Rollback()
+	if p.TargetServerID > 0 {
+		if p.Action != "revoke" {
+			return service.ErrVPNInvalid
+		}
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(821407238)`); err != nil {
+			return err
+		}
+	}
 	var owner string
 	var active, deleting, deleted bool
 	err = tx.QueryRowContext(ctx, `SELECT s.owner_ref,u.status='active' AND u.deleted_at IS NULL,s.delete_requested_at IS NOT NULL,s.deleted_at IS NOT NULL FROM vpn_subscriptions s JOIN users u ON u.id=s.user_id WHERE s.id=$1 FOR UPDATE OF s`, id).Scan(&owner, &active, &deleting, &deleted)
@@ -251,6 +294,28 @@ func (r *vpnRepository) Queue(ctx context.Context, id, actor int64, p service.VP
 	p.OwnerRef = owner
 	if p.OperationID == "" {
 		p.OperationID = uuid.NewString()
+	}
+	if p.TargetServerID > 0 {
+		sub, err := scanVPNSub(tx.QueryRowContext(ctx, `SELECT `+vpnSubColumns+vpnSubJoin+` WHERE s.id=$1`, id))
+		if err != nil {
+			return err
+		}
+		if p.TargetServerID == sub.ServerID {
+			if err := validateVPNRotationNode(ctx, tx, sub.ServerID); err != nil {
+				return err
+			}
+		} else {
+			newOwner := uuid.NewString()
+			target, err := selectVPNServerByQuota(ctx, tx, vpnNodeRequest{SourceID: sub.ServerID, RequestedID: p.TargetServerID, RequiredQuota: sub.QuotaBytes, OwnerRef: newOwner})
+			if err != nil {
+				return err
+			}
+			p.Action = "migrate"
+			p.Migration = newVPNMigration(sub, target, newOwner, true)
+			if _, err = tx.ExecContext(ctx, `UPDATE vpn_servers SET last_assigned_at=now() WHERE id=$1`, target); err != nil {
+				return err
+			}
+		}
 	}
 	b, _ := json.Marshal(p)
 	if _, err = tx.ExecContext(ctx, `INSERT INTO vpn_operations(id,subscription_id,action,payload,actor_id) VALUES($1,$2,$3,$4,$5)`, p.OperationID, id, p.Action, string(b), actor); err != nil {
@@ -309,12 +374,24 @@ func (r *vpnRepository) MarkSyncError(ctx context.Context, id int64, message str
 	return err
 }
 func (r *vpnRepository) List(ctx context.Context, f service.VPNFilter) ([]service.VPNSubscription, int, error) {
+	order := "s.created_at"
+	if f.SortBy == "used_bytes" {
+		order = "(s.snapshot->>'used_traffic')::bigint"
+	} else if f.SortBy != "" && f.SortBy != "created_at" {
+		return nil, 0, service.ErrVPNInvalid
+	}
+	direction := "DESC"
+	if f.SortOrder == "asc" {
+		direction = "ASC"
+	} else if f.SortOrder != "" && f.SortOrder != "desc" {
+		return nil, 0, service.ErrVPNInvalid
+	}
 	where := ` WHERE (s.deleted_at IS NULL OR $3='deleted') AND ($1='' OR u.email ILIKE '%'||$1||'%' OR s.remote_username ILIKE '%'||$1||'%') AND ($2::bigint=0 OR s.server_id=$2) AND ($3='' OR s.status=$3 OR ($3='failed' AND s.apply_status='failed'))`
 	var total int
 	if err := r.db.QueryRowContext(ctx, `SELECT count(*)`+vpnSubJoin+where, f.Query, f.ServerID, f.Status).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT `+vpnSubColumns+vpnSubJoin+where+` ORDER BY s.id DESC LIMIT $4 OFFSET $5`, f.Query, f.ServerID, f.Status, f.PageSize, (f.Page-1)*f.PageSize)
+	rows, err := r.db.QueryContext(ctx, `SELECT `+vpnSubColumns+vpnSubJoin+where+` ORDER BY `+order+` `+direction+` NULLS LAST,s.id DESC LIMIT $4 OFFSET $5`, f.Query, f.ServerID, f.Status, f.PageSize, (f.Page-1)*f.PageSize)
 	if err != nil {
 		return nil, 0, err
 	}

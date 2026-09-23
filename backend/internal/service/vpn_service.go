@@ -162,6 +162,9 @@ func (s *VPNService) Probe(ctx context.Context, id int64) (*VPNServer, error) {
 	if meta != nil && meta.Traffic != nil && !validVPNNodeTraffic(meta.Traffic) {
 		meta.Traffic = nil
 	}
+	if meta != nil && meta.AllocatedQuotaBytes != nil && !(&VPNNodeAllocation{AllocatedQuotaBytes: *meta.AllocatedQuotaBytes, ManagedQuotaBytes: meta.ManagedQuotaBytes}).Valid() {
+		meta, message = nil, "节点返回的分配额度统计无效"
+	}
 	if err = s.repo.UpdateServerHealth(ctx, id, meta, message); err != nil {
 		return nil, err
 	}
@@ -268,6 +271,15 @@ func (s *VPNService) Revoke(ctx context.Context, id, actor int64) (*VPNSubscript
 	}
 	return s.Get(ctx, id)
 }
+func (s *VPNService) Rotate(ctx context.Context, id, actor, targetServerID int64) (*VPNSubscription, error) {
+	if targetServerID <= 0 {
+		return nil, ErrVPNInvalid
+	}
+	if err := s.repo.Queue(ctx, id, actor, VPNOperationPayload{Action: "revoke", TargetServerID: targetServerID}); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
 func (s *VPNService) Delete(ctx context.Context, id, actor int64) (*VPNSubscription, error) {
 	if err := s.repo.Queue(ctx, id, actor, VPNOperationPayload{Action: "delete"}); err != nil {
 		return nil, err
@@ -281,6 +293,15 @@ func (s *VPNService) Retry(ctx context.Context, id int64) (*VPNSubscription, err
 	return s.Get(ctx, id)
 }
 func (s *VPNService) List(ctx context.Context, f VPNFilter) (*VPNListResponse, error) {
+	if f.SortBy == "" {
+		f.SortBy = "created_at"
+	}
+	if f.SortOrder == "" {
+		f.SortOrder = "desc"
+	}
+	if (f.SortBy != "created_at" && f.SortBy != "used_bytes") || (f.SortOrder != "asc" && f.SortOrder != "desc") {
+		return nil, ErrVPNInvalid
+	}
 	if f.Page < 1 {
 		f.Page = 1
 	}
@@ -393,7 +414,10 @@ func (s *VPNService) process(ctx context.Context, o *VPNOperation) {
 		message = err.Error()
 		return
 	}
-	result, err := s.remote.Submit(ctx, server, cred, sub.RemoteUsername, o.Payload)
+	// 管理员选择的目标属于平台调度字段，不传给节点的个人操作协议。
+	payload.TargetServerID = 0
+	remotePayload, _ := json.Marshal(payload)
+	result, err := s.remote.Submit(ctx, server, cred, sub.RemoteUsername, remotePayload)
 	if err != nil {
 		message = err.Error()
 		if e, ok := err.(*vpnHTTPError); ok && e.Status >= 400 && e.Status < 500 && e.Status != 429 {
@@ -443,7 +467,11 @@ func (s *VPNService) process(ctx context.Context, o *VPNOperation) {
 			if payload.Action == "create" || payload.Action == "revoke" {
 				current, checkErr := s.repo.GetServer(ctx, fresh.ServerID)
 				if checkErr != nil || !current.Enabled {
-					message = "节点已禁用，等待迁移到可用节点"
+					if payload.TargetServerID > 0 {
+						message = "所选节点已禁用，等待该节点恢复后继续"
+					} else {
+						message = "节点已禁用，等待迁移到可用节点"
+					}
 					return
 				}
 			}
@@ -467,7 +495,7 @@ func (s *VPNService) Tick(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if v.Enabled && (v.LastCheckedAt == nil || time.Since(*v.LastCheckedAt) > 30*time.Second) {
+		if v.Enabled && (v.LastCheckedAt == nil || time.Since(*v.LastCheckedAt) > 30*time.Second || v.AllocationSnapshot == nil) {
 			_, _ = s.Probe(ctx, v.ID)
 		}
 	}

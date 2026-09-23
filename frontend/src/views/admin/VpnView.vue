@@ -52,6 +52,13 @@
                 <div class="flex min-w-0 flex-col px-2"><dt class="text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('vpn.assignedCount') }}</dt><dd class="mt-auto pt-1 text-base font-semibold text-gray-900 tabular-nums dark:text-gray-100">{{ server.assigned_count }}</dd></div>
                 <div class="flex min-w-0 flex-col px-2"><dt class="text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('vpn.pendingCount') }}</dt><dd class="mt-auto pt-1 text-base font-semibold text-gray-900 tabular-nums dark:text-gray-100">{{ server.pending_count }}</dd></div>
               </dl>
+              <div class="rounded-xl border border-gray-200 bg-gray-50/80 p-3 dark:border-dark-700 dark:bg-dark-900/30" data-testid="vpn-node-allocation">
+                <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400"><span>{{ t('vpn.allocatedQuota') }} / {{ t('vpn.quota') }}</span><span class="font-medium tabular-nums">{{ allocationPercent(server) }}</span></div>
+                <p class="mt-1 break-words text-sm font-semibold text-gray-900 tabular-nums dark:text-gray-100">{{ trafficBytes(server.allocation_quota_bytes) }} / {{ server.traffic_quota_bytes ? trafficBytes(server.traffic_quota_bytes) : '—' }}</p>
+                <div class="mt-2 h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700" role="progressbar" :aria-label="t('vpn.allocatedQuota')" :aria-valuenow="allocationProgress(server)" :aria-valuemin="0" :aria-valuemax="100" :aria-valuetext="`${trafficBytes(server.allocation_quota_bytes)} / ${server.traffic_quota_bytes ? trafficBytes(server.traffic_quota_bytes) : '—'} (${allocationPercent(server)})`">
+                  <div class="h-full bg-primary-500" :style="{ width: `${allocationProgress(server) ?? 0}%` }" />
+                </div>
+              </div>
               <dl class="grid grid-cols-1 gap-x-6 gap-y-3 text-xs sm:grid-cols-2">
                 <div><dt class="text-gray-500 dark:text-gray-400">{{ t('vpn.lastChecked') }}</dt><dd class="mt-1 break-words font-medium text-gray-700 tabular-nums dark:text-gray-300">{{ time(server.last_checked_at) }}</dd></div>
                 <div><dt class="text-gray-500 dark:text-gray-400">{{ t('vpn.sampled') }}</dt><dd class="mt-1 break-words font-medium text-gray-700 tabular-nums dark:text-gray-300">{{ time(server.traffic_sampled_at || null) }}</dd></div>
@@ -101,6 +108,7 @@
           <label class="min-w-48 flex-1 text-sm">{{ t('vpn.search') }}<input v-model="query" class="input mt-1" /></label>
           <label class="text-sm">{{ t('vpn.server') }}<select v-model="serverFilter" class="input mt-1"><option value="">{{ t('vpn.allServers') }}</option><option v-for="server in servers" :key="server.id" :value="server.id">{{ server.name }}</option></select></label>
           <label class="text-sm">{{ t('vpn.status') }}<select v-model="statusFilter" class="input mt-1"><option value="">{{ t('vpn.allStatuses') }}</option><option v-for="status in statuses" :key="status" :value="status">{{ state(status) }}</option></select></label>
+          <label class="text-sm">{{ t('vpn.sort') }}<select v-model="sort" data-testid="vpn-sort" class="input mt-1" :disabled="loading || busy" @change="filter"><option value="created_at_desc">{{ t('vpn.sortNewest') }}</option><option value="used_bytes_desc">{{ t('vpn.sortUsageDesc') }}</option><option value="used_bytes_asc">{{ t('vpn.sortUsageAsc') }}</option></select></label>
           <button class="btn btn-secondary" :disabled="loading || busy">{{ t('vpn.filter') }}</button>
         </form>
         <p v-if="loading" role="status" class="text-sm text-gray-500">{{ t('vpn.loading') }}</p>
@@ -109,11 +117,16 @@
           <table class="w-full text-left text-sm">
             <thead><tr class="border-b border-gray-200 text-gray-500 dark:border-dark-700"><th class="p-3">{{ t('vpn.selectUser') }}</th><th class="p-3">{{ t('vpn.server') }}</th><th class="p-3">{{ t('vpn.status') }}</th><th class="p-3">{{ t('vpn.used') }} / {{ t('vpn.quota') }}</th><th class="p-3">{{ t('vpn.sampled') }}</th><th class="p-3">{{ t('vpn.details') }}</th></tr></thead>
             <tbody>
-              <tr v-for="item in items" :key="item.id" class="border-b border-gray-100 dark:border-dark-700">
+              <tr v-for="item in subscriptionRows" :key="item.id" class="border-b border-gray-100 dark:border-dark-700">
                 <td class="p-3"><div>{{ item.user_email || `#${item.user_id}` }}</div><div class="text-xs text-gray-500">#{{ item.user_id }}<span v-if="item.group_name"> · {{ item.group_name }}</span></div></td>
                 <td class="p-3">{{ item.server_name }}</td>
                 <td class="p-3"><div>{{ state(item.status) }} · {{ state(item.apply_status) }}</div><div class="text-xs text-gray-500">{{ state(item.accounting_status) }}</div><p v-if="item.last_error" class="max-w-xs break-words text-xs text-red-600">{{ item.last_error }}</p></td>
-                <td class="whitespace-nowrap p-3">{{ formatVpnBytes(item.used_bytes) }} / {{ formatVpnBytes(item.quota_bytes) }}</td>
+                <td class="min-w-48 p-3" data-testid="vpn-usage">
+                  <div class="flex items-center justify-between gap-3 whitespace-nowrap tabular-nums"><span>{{ item.usage.used }} / {{ item.usage.quota }}</span><span class="text-xs text-gray-500">{{ item.usage.percent }}</span></div>
+                  <div class="mt-2 h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700" role="progressbar" :aria-label="t('vpn.used')" :aria-valuenow="item.usage.value" :aria-valuemin="0" :aria-valuemax="100" :aria-valuetext="t('vpn.usageProgress', item.usage)">
+                    <div class="h-full bg-primary-500" :style="{ width: `${item.usage.value ?? 0}%` }" />
+                  </div>
+                </td>
                 <td class="p-3">{{ time(item.sampled_at) }}</td>
                 <td class="p-3"><button class="btn btn-secondary whitespace-nowrap" @click="selected = item">{{ t('vpn.details') }}</button></td>
               </tr>
@@ -201,7 +214,7 @@
           <button class="btn btn-secondary" :disabled="busy" @click="runAction('refresh')">{{ t('vpn.refresh') }}</button>
           <button class="btn btn-secondary" :disabled="busy || vpnIsPending(selected) || deletionRequested(selected)" @click="openEdit">{{ t('vpn.edit') }}</button>
           <button class="btn btn-secondary" :disabled="busy || !canRetry" @click="runAction('retry')">{{ t('vpn.retry') }}</button>
-          <button class="btn btn-danger" :disabled="busy || vpnIsPending(selected) || deletionRequested(selected)" @click="showRevoke = true">{{ t('vpn.revoke') }}</button>
+          <button class="btn btn-danger" :disabled="busy || vpnIsPending(selected) || deletionRequested(selected)" @click="openRevoke">{{ t('vpn.revoke') }}</button>
           <button class="btn btn-danger" :disabled="busy || selected.status === 'deleted' || (deletionRequested(selected) && vpnIsPending(selected))" @click="showDelete = true">{{ t('vpn.deleteSubscription') }}</button>
         </div>
       </template>
@@ -217,9 +230,25 @@
     </BaseDialog>
 
     <BaseDialog :show="showRevoke" :title="t('vpn.revoke')" :z-index="60" :show-close-button="!busy" :close-on-escape="!busy" @close="showRevoke = false">
-      <p>{{ t(selectedServerDisabled ? 'vpn.revokeMigrateConfirm' : 'vpn.revokeConfirm') }}</p>
+      <div class="space-y-4" data-testid="vpn-rotation">
+        <p class="text-sm text-gray-500">{{ t('vpn.selectRotationServerHint') }}</p>
+        <fieldset class="space-y-2">
+          <legend class="mb-2 text-sm font-medium">{{ t('vpn.selectRotationServer') }}</legend>
+          <label v-for="server in servers" :key="server.id" class="flex gap-3 rounded-xl border p-3" :class="rotationServerId === server.id ? 'border-primary-300 bg-primary-50 dark:border-primary-700 dark:bg-primary-900/20' : 'border-gray-200 dark:border-dark-700'">
+            <input v-model="rotationServerId" type="radio" name="rotation-server" :value="server.id" :disabled="busy || !rotationAvailable(server)" class="mt-1" />
+            <span class="min-w-0 flex-1 space-y-1 text-sm" :class="!rotationAvailable(server) ? 'text-gray-400' : ''">
+              <span class="block break-words font-medium">{{ server.name }} <span v-if="server.id === selected?.server_id" class="text-xs text-gray-500">· {{ t('vpn.currentServer') }}</span></span>
+              <span class="block tabular-nums">{{ t('vpn.allocatedQuota') }} {{ trafficBytes(server.allocation_quota_bytes) }} / {{ t('vpn.quota') }} {{ server.traffic_quota_bytes ? trafficBytes(server.traffic_quota_bytes) : t('vpn.notConfigured') }} · {{ allocationPercent(server) }}</span>
+              <span class="block text-xs tabular-nums">{{ t('vpn.used') }} {{ trafficBytes(server.traffic_used_bytes) }} · {{ t('vpn.allocatableQuota') }} {{ trafficBytes(server.allocation_available_bytes) }}</span>
+              <span v-if="!rotationAvailable(server)" class="block text-xs">{{ rotationUnavailableReason(server) }}</span>
+            </span>
+          </label>
+        </fieldset>
+        <p v-if="!servers.some(rotationAvailable)" class="text-sm text-amber-600">{{ t('vpn.noRotationServer') }}</p>
+        <p v-if="rotationServer">{{ t(rotationServer.id === selected?.server_id ? 'vpn.revokeConfirm' : 'vpn.revokeMigrateConfirm', { name: rotationServer.name }) }}</p>
+      </div>
       <p v-if="revokeError" role="alert" class="mt-3 text-sm text-red-600">{{ revokeError }}</p>
-      <template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" :disabled="busy" @click="showRevoke = false">{{ t('vpn.cancel') }}</button><button class="btn btn-danger" :disabled="busy" @click="runAction('revoke')">{{ t('vpn.confirm') }}</button></div></template>
+      <template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" :disabled="busy" @click="showRevoke = false">{{ t('vpn.cancel') }}</button><button class="btn btn-danger" :disabled="!canRotate" @click="rotateSubscription">{{ t('vpn.confirm') }}</button></div></template>
     </BaseDialog>
     <BaseDialog :show="showDelete" :title="t('vpn.deleteSubscription')" :z-index="60" :show-close-button="!busy" :close-on-escape="!busy" @close="showDelete = false">
       <p>{{ t('vpn.deleteConfirm') }}</p>
@@ -292,6 +321,8 @@ const pageSize = 20
 const query = ref('')
 const serverFilter = ref<number | ''>('')
 const statusFilter = ref('')
+const sort = ref<'created_at_desc' | 'used_bytes_desc' | 'used_bytes_asc'>('created_at_desc')
+const subscriptionSort = computed(() => ({ sort_by: sort.value === 'created_at_desc' ? 'created_at' as const : 'used_bytes' as const, sort_order: sort.value === 'used_bytes_asc' ? 'asc' as const : 'desc' as const }))
 const statuses = ['active', 'disabled', 'limited', 'expired', 'provisioning', 'failed', 'deleting', 'deleted']
 const loading = ref(false)
 const busy = ref(false)
@@ -301,7 +332,9 @@ const editError = ref('')
 const revokeError = ref('')
 const deleteError = ref('')
 const selected = ref<VpnSubscription | null>(null)
-const selectedServerDisabled = computed(() => !!selected.value && servers.value.some(server => server.id === selected.value?.server_id && !server.enabled))
+const rotationServerId = ref<number | null>(null)
+const rotationServer = computed(() => servers.value.find(server => server.id === rotationServerId.value))
+const canRotate = computed(() => !busy.value && !!selected.value && !vpnIsPending(selected.value) && !deletionRequested(selected.value) && !!rotationServer.value && rotationAvailable(rotationServer.value))
 const showServer = ref(false)
 const showCreate = ref(false)
 const showEdit = ref(false)
@@ -325,7 +358,15 @@ let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 const state = (value: string) => te(`vpn.states.${value}`) ? t(`vpn.states.${value}`) : value || '—'
 const time = (value: string | null) => formatVpnTime(value, locale.value)
-const trafficBytes = (value?: number | null) => value == null ? '—' : formatVpnBytes(value)
+const validTraffic = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0
+const trafficBytes = (value?: number | null) => validTraffic(value) ? formatVpnBytes(value) : '—'
+const allocationPercent = (server: VpnServer) => validTraffic(server.allocation_ratio) && Number.isFinite(server.allocation_ratio * 100) ? `${(server.allocation_ratio * 100).toLocaleString(locale.value, { maximumFractionDigits: 1 })}%` : '—'
+const allocationProgress = (server: VpnServer) => validTraffic(server.allocation_ratio) && Number.isFinite(server.allocation_ratio * 100) ? Math.min(100, server.allocation_ratio * 100) : undefined
+const subscriptionRows = computed(() => items.value.map(item => {
+  const ratio = validTraffic(item.used_bytes) && validTraffic(item.quota_bytes) && item.quota_bytes > 0 ? item.used_bytes / item.quota_bytes * 100 : NaN
+  const known = Number.isFinite(ratio)
+  return { ...item, usage: { used: trafficBytes(item.used_bytes), quota: trafficBytes(item.quota_bytes), percent: known ? `${ratio.toLocaleString(locale.value, { maximumFractionDigits: 1 })}%` : '—', value: known ? Math.min(100, ratio) : undefined } }
+}))
 const trafficCurrent = (server: VpnServer) => ['ok', 'partial_history'].includes(server.traffic_accounting_status || '') && server.traffic_used_bytes != null && !!server.traffic_sampled_at && !!server.traffic_period_end && new Date(server.traffic_period_end).getTime() > Date.now()
 const deletionRequested = (subscription: VpnSubscription) => !!subscription.delete_requested_at || ['deleting', 'deleted'].includes(subscription.status)
 const canRetry = computed(() => !!selected.value && (['failed', 'pending'].includes(selected.value.operation_status) || selected.value.apply_status === 'failed'))
@@ -347,7 +388,7 @@ async function load() {
   try {
     const [nodes, totals, subscriptions, vpnGroups] = await Promise.all([
       adminVpnAPI.servers(), adminVpnAPI.summary(),
-      adminVpnAPI.subscriptions({ page: page.value, page_size: pageSize, q: query.value || undefined, server_id: serverFilter.value || undefined, status: statusFilter.value || undefined }),
+      adminVpnAPI.subscriptions({ page: page.value, page_size: pageSize, q: query.value || undefined, server_id: serverFilter.value || undefined, status: statusFilter.value || undefined, ...subscriptionSort.value }),
       adminVpnAPI.groups()
     ])
     servers.value = nodes
@@ -574,22 +615,44 @@ async function saveSubscription() {
   } catch (e) { editError.value = vpnError(e, t('vpn.actionFailed')) }
   finally { busy.value = false }
 }
-async function runAction(action: 'refresh' | 'retry' | 'revoke') {
-  if (busy.value || !selected.value) return
-  if (action === 'revoke' && deletionRequested(selected.value)) return
+function openRevoke() {
+  rotationServerId.value = null
+  showRevoke.value = true
+}
+function rotationAvailable(server: VpnServer) {
+  if (!server.enabled || !server.healthy) return false
+  if (server.id === selected.value?.server_id) return true
+  // 兼容尚未提供容量字段的旧响应；新响应中的未知容量不能当作可用额度。
+  if (!Object.prototype.hasOwnProperty.call(server, 'allocation_available_bytes')) return true
+  return validTraffic(server.allocation_available_bytes) && validTraffic(selected.value?.quota_bytes) && server.allocation_available_bytes >= selected.value!.quota_bytes
+}
+function rotationUnavailableReason(server: VpnServer) {
+  if (!server.enabled) return t('vpn.disabled')
+  if (!server.healthy) return t('vpn.unhealthy')
+  return t(validTraffic(server.allocation_available_bytes) ? 'vpn.insufficientAllocation' : 'vpn.unknownAllocation')
+}
+async function rotateSubscription() {
+  if (!canRotate.value || !selected.value || !rotationServer.value) return
   busy.value = true
-  dialogError.value = ''
   revokeError.value = ''
   try {
-    updateSelected(await adminVpnAPI.action(selected.value.id, action))
+    updateSelected(await adminVpnAPI.rotate(selected.value.id, rotationServer.value.id))
     showRevoke.value = false
+    app.showSuccess(t('vpn.accepted'))
+    await load()
+  } catch (e) { revokeError.value = vpnError(e, t('vpn.actionFailed')) }
+  finally { busy.value = false }
+}
+async function runAction(action: 'refresh' | 'retry') {
+  if (busy.value || !selected.value) return
+  busy.value = true
+  dialogError.value = ''
+  try {
+    updateSelected(await adminVpnAPI.action(selected.value.id, action))
     if (action !== 'refresh') app.showSuccess(t('vpn.accepted'))
     await load()
-  } catch (e) {
-    const message = vpnError(e, t('vpn.actionFailed'))
-    if (action === 'revoke') revokeError.value = message
-    else dialogError.value = message
-  } finally { busy.value = false }
+  } catch (e) { dialogError.value = vpnError(e, t('vpn.actionFailed')) }
+  finally { busy.value = false }
 }
 async function deleteSubscription() {
   if (busy.value || !selected.value) return

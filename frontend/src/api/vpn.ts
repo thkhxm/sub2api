@@ -82,6 +82,9 @@ export interface VpnServer {
   traffic_accounting_status?: string
   traffic_used_offset_bytes?: number
   traffic_offset_period_start?: string | null
+  allocation_quota_bytes?: number | null
+  allocation_available_bytes?: number | null
+  allocation_ratio?: number | null
 }
 
 export interface VpnDailyTraffic {
@@ -152,11 +155,13 @@ export const adminVpnAPI = {
   egress: async (id: number) => (await apiClient.get<VpnEgress>(`/admin/vpn/servers/${id}/egress`)).data,
   ensureEgress: async (id: number) => (await apiClient.post<VpnEgress>(`/admin/vpn/servers/${id}/egress`)).data,
   summary: async () => (await apiClient.get<VpnSummary>('/admin/vpn/summary')).data,
-  subscriptions: async (params: { page: number; page_size: number; q?: string; server_id?: number; status?: string }) =>
+  subscriptions: async (params: { page: number; page_size: number; q?: string; server_id?: number; status?: string; sort_by?: 'created_at' | 'used_bytes'; sort_order?: 'asc' | 'desc' }) =>
     (await apiClient.get<{ items: VpnSubscription[]; total: number; page: number; page_size: number }>('/admin/vpn/subscriptions', { params })).data,
   create: async (userId: number) => (await apiClient.post<VpnSubscription>('/admin/vpn/subscriptions', { user_id: userId })).data,
   update: async (id: number, input: { quota_bytes?: number; enabled?: boolean }) =>
     (await apiClient.put<VpnSubscription>(`/admin/vpn/subscriptions/${id}`, input)).data,
-  action: async (id: number, action: 'refresh' | 'retry' | 'revoke') =>
+  rotate: async (id: number, targetServerId: number) =>
+    (await apiClient.post<VpnSubscription>(`/admin/vpn/subscriptions/${id}/revoke`, { target_server_id: targetServerId })).data,
+  action: async (id: number, action: 'refresh' | 'retry') =>
     (await apiClient.post<VpnSubscription>(`/admin/vpn/subscriptions/${id}/${action}`)).data
 }

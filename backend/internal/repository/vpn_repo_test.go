@@ -68,6 +68,10 @@ func vpnTestRepositoryMigrations(t *testing.T, routing bool) (*vpnRepository, *s
 		_, e = db.Exec(string(migration))
 		require.NoError(t, e)
 	}
+	migration, e = os.ReadFile("../../migrations/242_vpn_allocation.sql")
+	require.NoError(t, e)
+	_, e = db.Exec(string(migration))
+	require.NoError(t, e)
 	return &vpnRepository{db: db}, db
 }
 func vpnTestUser(t *testing.T, db *sql.DB, balance int) int64 {
@@ -79,10 +83,18 @@ func vpnTestUser(t *testing.T, db *sql.DB, balance int) int64 {
 func vpnTestServer(t *testing.T, r *vpnRepository, count int) *service.VPNServer {
 	t.Helper()
 	ctx := context.Background()
-	s, e := r.SaveServer(ctx, &service.VPNServer{Name: "test", BaseURL: "https://" + uuid.NewString() + ".invalid", AdminUsername: "integration", CredentialsEncrypted: "encrypted-fixture", Enabled: true})
+	s, e := r.SaveServer(ctx, &service.VPNServer{Name: "test", BaseURL: "https://" + uuid.NewString() + ".invalid", AdminUsername: "integration", CredentialsEncrypted: "encrypted-fixture", Enabled: true, TrafficQuotaBytes: 1000 * service.VPNDefaultQuota})
 	require.NoError(t, e)
-	require.NoError(t, r.UpdateServerHealth(ctx, s.ID, &service.VPNServerMeta{Healthy: true, PersonalUserCount: count}, ""))
+	require.NoError(t, r.UpdateServerHealth(ctx, s.ID, vpnTestQuotaMeta(count), ""))
 	return s
+}
+func vpnTestQuotaMeta(count int, refs ...string) *service.VPNServerMeta {
+	total := int64(count) * service.VPNDefaultQuota
+	managed := map[string]int64{}
+	for _, ref := range refs {
+		managed[ref] = service.VPNDefaultQuota
+	}
+	return &service.VPNServerMeta{Healthy: true, PersonalUserCount: count, ManagedOwnerRefs: refs, AllocatedQuotaBytes: &total, ManagedQuotaBytes: managed}
 }
 func vpnReserve(t *testing.T, r *vpnRepository, user int64) *service.VPNSubscription {
 	t.Helper()
@@ -154,8 +166,8 @@ func TestVPNRepositoryAllocationAndBalance(t *testing.T) {
 	require.Equal(t, service.VPNDefaultQuota, third.QuotaBytes)
 	require.LessOrEqual(t, len(third.RemoteUsername), 32)
 	// 已存在远端的 owner 不应重复计入预占。
-	require.NoError(t, r.UpdateServerHealth(ctx, a.ID, &service.VPNServerMeta{Healthy: true, PersonalUserCount: 2, ManagedOwnerRefs: []string{first.OwnerRef, third.OwnerRef}}, ""))
-	require.NoError(t, r.UpdateServerHealth(ctx, b.ID, &service.VPNServerMeta{Healthy: true, PersonalUserCount: 3, ManagedOwnerRefs: []string{second.OwnerRef}}, ""))
+	require.NoError(t, r.UpdateServerHealth(ctx, a.ID, vpnTestQuotaMeta(2, first.OwnerRef, third.OwnerRef), ""))
+	require.NoError(t, r.UpdateServerHealth(ctx, b.ID, vpnTestQuotaMeta(3, second.OwnerRef), ""))
 	fourth := vpnReserve(t, r, vpnTestUser(t, db, 1))
 	require.Equal(t, a.ID, fourth.ServerID)
 	zero := vpnTestUser(t, db, 0)
@@ -388,7 +400,8 @@ type vpnRepositoryRemoteFixture struct {
 
 func (r *vpnRepositoryRemoteFixture) Server(context.Context, *service.VPNServer, service.VPNCredentials) (*service.VPNServerMeta, error) {
 	now := time.Now()
-	return &service.VPNServerMeta{APIVersion: "sub2api-v1", Healthy: true, Protocol: "trojan", InboundTag: "TROJAN_TLS", AccountingStatus: "ok", SampledAt: &now}, nil
+	allocated := int64(0)
+	return &service.VPNServerMeta{APIVersion: "sub2api-v1", Healthy: true, Protocol: "trojan", InboundTag: "TROJAN_TLS", AccountingStatus: "ok", SampledAt: &now, AllocatedQuotaBytes: &allocated, ManagedQuotaBytes: map[string]int64{}}, nil
 }
 func (r *vpnRepositoryRemoteFixture) Submit(_ context.Context, _ *service.VPNServer, _ service.VPNCredentials, _ string, raw json.RawMessage) (*service.VPNRemoteOperation, error) {
 	if e := json.Unmarshal(raw, &r.operation); e != nil {
@@ -406,7 +419,8 @@ func TestVPNRepositoryServiceEncryptionRoundTrip(t *testing.T) {
 	cipher := &AESEncryptor{key: []byte("0123456789abcdef0123456789abcdef")}
 	remote := &vpnRepositoryRemoteFixture{base: "https://vpn-encryption.invalid"}
 	svc := service.NewVPNService(r, cipher, remote)
-	server, e := svc.SaveServer(ctx, 0, service.VPNServerInput{Name: "encrypted", BaseURL: remote.base, AdminUsername: "integration", AdminPassword: "private-admin-password", Enabled: true})
+	capacity := service.VPNDefaultQuota * 10
+	server, e := svc.SaveServer(ctx, 0, service.VPNServerInput{Name: "encrypted", BaseURL: remote.base, AdminUsername: "integration", AdminPassword: "private-admin-password", Enabled: true, TrafficQuotaBytes: &capacity})
 	require.NoError(t, e)
 	require.True(t, server.Healthy)
 	var encrypted string

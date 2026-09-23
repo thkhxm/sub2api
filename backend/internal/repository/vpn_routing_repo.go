@@ -12,20 +12,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// 与创建订阅共用分配锁，迁移目标在切换绑定前也占用节点容量。
-func selectVPNServer(ctx context.Context, tx *sql.Tx, source, excluded int64) (int64, error) {
-	var id int64
-	err := tx.QueryRowContext(ctx, `SELECT v.id FROM vpn_servers v
-WHERE v.enabled AND v.healthy AND v.last_checked_at>now()-interval '2 minutes'
-AND v.id<>$1 AND v.id<>$2
-ORDER BY v.personal_user_count
-+(SELECT count(*) FROM vpn_subscriptions s WHERE s.server_id=v.id AND s.deleted_at IS NULL AND NOT(v.known_owner_refs ? s.owner_ref))
-+(SELECT count(*) FROM vpn_operations o WHERE o.action='migrate' AND o.status IN ('pending','running','failed') AND o.payload->'migration'->>'stage'<>'completed' AND NOT COALESCE((o.payload->'migration'->>'target_retired')::boolean,false) AND (o.payload->'migration'->>'target_server_id')::bigint=v.id AND NOT(v.known_owner_refs ? (o.payload->'migration'->>'target_owner_ref'))),
-v.last_assigned_at NULLS FIRST,v.id LIMIT 1 FOR UPDATE OF v`, source, excluded).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, service.ErrVPNNoServer
+func validateVPNRotationNode(ctx context.Context, tx *sql.Tx, id int64) error {
+	var available bool
+	err := tx.QueryRowContext(ctx, `SELECT enabled AND healthy AND last_checked_at>now()-interval '2 minutes' FROM vpn_servers WHERE id=$1 FOR SHARE`, id).Scan(&available)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !available {
+		return service.ErrVPNNoServer
 	}
-	return id, err
+	return err
+}
+
+func newVPNMigration(s *service.VPNSubscription, target int64, owner string, manual bool) *service.VPNMigration {
+	return &service.VPNMigration{SourceServerID: s.ServerID, SourceOwnerRef: s.OwnerRef, SourceUsername: s.RemoteUsername, TargetServerID: target, TargetOwnerRef: owner, TargetUsername: "pc_" + strings.ReplaceAll(owner, "-", "")[:28], Stage: "revoke_source", QuotaBytes: s.QuotaBytes, Enabled: s.Enabled, ManualTarget: manual}
 }
 
 // 先锁订阅再锁操作，与 Queue/Retry 保持一致；租约过期或操作已被替代时禁止提交。
@@ -103,8 +100,32 @@ func (r *vpnRepository) PrepareOperation(ctx context.Context, o *service.VPNOper
 	if err = tx.QueryRowContext(ctx, `SELECT enabled FROM vpn_servers WHERE id=$1 FOR SHARE`, s.ServerID).Scan(&enabled); err != nil {
 		return nil, err
 	}
-	if !enabled && (p.Action == "create" || p.Action == "revoke") {
-		target, e := selectVPNServer(ctx, tx, s.ServerID, 0)
+	if p.Action == "revoke" && p.TargetServerID > 0 {
+		if p.TargetServerID != s.ServerID {
+			return nil, service.ErrVPNInvalid
+		}
+		if err := validateVPNRotationNode(ctx, tx, s.ServerID); err != nil {
+			return nil, err
+		}
+	}
+	routeNeeded := !enabled && (p.Action == "create" || p.Action == "revoke")
+	requiredQuota := s.QuotaBytes
+	if p.Action == "create" && !current.Dispatched && p.DataLimit != nil && *p.DataLimit > requiredQuota {
+		requiredQuota = *p.DataLimit
+	}
+	if p.Action == "create" && !current.Dispatched && enabled {
+		_, capacityErr := selectVPNServerByQuota(ctx, tx, vpnNodeRequest{RequestedID: s.ServerID, RequiredQuota: requiredQuota, OwnerRef: s.OwnerRef, IgnoreOperationID: o.ID})
+		if capacityErr != nil && !errors.Is(capacityErr, service.ErrVPNNoServer) {
+			return nil, capacityErr
+		}
+		routeNeeded = capacityErr != nil
+	}
+	if routeNeeded {
+		owner := s.OwnerRef
+		if p.Action != "create" || current.Dispatched {
+			owner = uuid.NewString()
+		}
+		target, e := selectVPNServerByQuota(ctx, tx, vpnNodeRequest{SourceID: s.ServerID, RequiredQuota: requiredQuota, OwnerRef: owner, IgnoreOperationID: o.ID})
 		if e != nil {
 			return nil, e
 		}
@@ -112,9 +133,8 @@ func (r *vpnRepository) PrepareOperation(ctx context.Context, o *service.VPNOper
 			// 从未发送的创建沿用 owner 与操作编号，不会留下需回收的源账号。
 			_, err = tx.ExecContext(ctx, `UPDATE vpn_subscriptions SET server_id=$2,updated_at=now() WHERE id=$1`, s.ID, target)
 		} else {
-			owner := uuid.NewString()
 			p.Action = "migrate"
-			p.Migration = &service.VPNMigration{SourceServerID: s.ServerID, SourceOwnerRef: s.OwnerRef, SourceUsername: s.RemoteUsername, TargetServerID: target, TargetOwnerRef: owner, TargetUsername: "pc_" + strings.ReplaceAll(owner, "-", "")[:28], Stage: "revoke_source", QuotaBytes: s.QuotaBytes, Enabled: s.Enabled}
+			p.Migration = newVPNMigration(s, target, owner, false)
 			current.Payload, err = storeVPNPayload(ctx, tx, current, p)
 		}
 		if err != nil {
@@ -149,6 +169,14 @@ func (r *vpnRepository) MarkOperationDispatched(ctx context.Context, o *service.
 			return service.ErrVPNServerDisabled
 		}
 	}
+	if p.Action == "revoke" && p.TargetServerID > 0 {
+		if p.TargetServerID != s.ServerID {
+			return service.ErrVPNInvalid
+		}
+		if err := validateVPNRotationNode(ctx, tx, p.TargetServerID); err != nil {
+			return err
+		}
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE vpn_operations SET dispatched=true,updated_at=now() WHERE id=$1 AND lease_token=$2 AND status='running' AND lease_until>now()`, o.ID, o.LeaseToken)
 	if err != nil {
 		return err
@@ -165,7 +193,7 @@ func (r *vpnRepository) MarkOperationDispatched(ctx context.Context, o *service.
 }
 
 func sameVPNMigrationBinding(a, b *service.VPNMigration) bool {
-	return a != nil && b != nil && a.SourceServerID == b.SourceServerID && a.SourceOwnerRef == b.SourceOwnerRef && a.SourceUsername == b.SourceUsername && a.TargetServerID == b.TargetServerID && a.TargetOwnerRef == b.TargetOwnerRef && a.TargetUsername == b.TargetUsername && a.QuotaBytes == b.QuotaBytes && a.Enabled == b.Enabled
+	return a != nil && b != nil && a.SourceServerID == b.SourceServerID && a.SourceOwnerRef == b.SourceOwnerRef && a.SourceUsername == b.SourceUsername && a.TargetServerID == b.TargetServerID && a.TargetOwnerRef == b.TargetOwnerRef && a.TargetUsername == b.TargetUsername && a.QuotaBytes == b.QuotaBytes && a.Enabled == b.Enabled && a.ManualTarget == b.ManualTarget
 }
 
 func (r *vpnRepository) CheckpointMigration(ctx context.Context, o *service.VPNOperation, m *service.VPNMigration) error {
@@ -252,7 +280,17 @@ func (r *vpnRepository) RetargetMigration(ctx context.Context, o *service.VPNOpe
 		// 确认旧凭据撤销后，可在重新启用的同一节点上创建全新 owner。
 		excluded = 0
 	}
-	target, err := selectVPNServer(ctx, tx, old.SourceServerID, excluded)
+	newOwner := uuid.NewString()
+	requested := int64(0)
+	if old.ManualTarget {
+		requested = old.TargetServerID
+		excluded = 0
+	}
+	quota := old.QuotaBytes
+	if s.QuotaBytes > quota {
+		quota = s.QuotaBytes
+	}
+	target, err := selectVPNServerByQuota(ctx, tx, vpnNodeRequest{SourceID: old.SourceServerID, ExcludedID: excluded, RequestedID: requested, RequiredQuota: quota, OwnerRef: newOwner, IgnoreOperationID: o.ID})
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +304,7 @@ func (r *vpnRepository) RetargetMigration(ctx context.Context, o *service.VPNOpe
 		return nil, service.ErrVPNInvalid
 	}
 	next.TargetServerID = target
-	next.TargetOwnerRef = uuid.NewString()
+	next.TargetOwnerRef = newOwner
 	next.TargetUsername = "pc_" + strings.ReplaceAll(next.TargetOwnerRef, "-", "")[:28]
 	next.TargetDispatched = false
 	next.TargetRetired = false

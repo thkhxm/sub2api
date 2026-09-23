@@ -80,7 +80,8 @@ func newVPNLiveFixture(t *testing.T) *vpnLiveFixture {
 		f.tls[i] = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: "127.0.0.1"}
 		f.clients[i] = &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{TLSClientConfig: f.tls[i], Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		f.creds[i] = service.VPNCredentials{Password: a.AdminPassword, CAPEM: string(ca)}
-		f.nodes[i], err = f.svc.SaveServer(context.Background(), 0, service.VPNServerInput{Name: fmt.Sprintf("真实迁移验收节点%d", i+1), BaseURL: a.BaseURL, AdminUsername: a.AdminUsername, AdminPassword: a.AdminPassword, CAPEM: &f.creds[i].CAPEM, Enabled: i == 0})
+		capacity := 20 * service.VPNDefaultQuota
+		f.nodes[i], err = f.svc.SaveServer(context.Background(), 0, service.VPNServerInput{Name: fmt.Sprintf("真实迁移验收节点%d", i+1), BaseURL: a.BaseURL, AdminUsername: a.AdminUsername, AdminPassword: a.AdminPassword, CAPEM: &f.creds[i].CAPEM, Enabled: i == 0, TrafficQuotaBytes: &capacity})
 		require.NoError(t, err)
 		require.True(t, f.nodes[i].Healthy, "本机节点必须已完成真实健康探测")
 	}
@@ -275,7 +276,7 @@ func (f *vpnLiveFixture) assertRetired(t *testing.T, ctx context.Context, origin
 	}
 }
 
-func TestVPNRoutingLiveMigrationPreservesRealTrafficAndRevokesSource(t *testing.T) {
+func TestVPNRoutingLiveManualMigrationPreservesRealTrafficAndRevokesSource(t *testing.T) {
 	f := newVPNLiveFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -307,8 +308,10 @@ func TestVPNRoutingLiveMigrationPreservesRealTrafficAndRevokesSource(t *testing.
 	_, err = f.svc.Refresh(ctx, original.ID)
 	require.NoError(t, err)
 	f.enable(t, 1, true)
-	f.enable(t, 0, false)
-	_, err = f.svc.Revoke(ctx, original.ID, user)
+	source, err := f.r.GetServer(ctx, original.ServerID)
+	require.NoError(t, err)
+	require.True(t, source.Enabled, "必须覆盖源节点仍启用时手选另一节点迁移")
+	_, err = f.svc.Rotate(ctx, original.ID, user, f.nodes[1].ID)
 	require.NoError(t, err)
 	migrated := f.waitApplied(t, ctx, original.ID)
 	require.Equal(t, original.ID, migrated.ID)
@@ -335,7 +338,75 @@ func TestVPNRoutingLiveMigrationPreservesRealTrafficAndRevokesSource(t *testing.
 	traffic, err := f.svc.DailyTraffic(ctx, service.VPNTrafficFilter{StartDate: day, EndDate: day, UserID: user})
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, traffic.TotalBytes, before.UsedTraffic)
-	t.Logf("真实双向流量至少 %d 字节；迁移后已用 %d；旧 URL、旧凭据、旧连接失效，新节点真实代理回显通过", before.UsedTraffic, migrated.UsedBytes)
+	var raw []byte
+	require.NoError(t, f.db.QueryRow(`SELECT payload FROM vpn_operations WHERE subscription_id=$1 AND action='migrate'`, original.ID).Scan(&raw))
+	var operation service.VPNOperationPayload
+	require.NoError(t, json.Unmarshal(raw, &operation))
+	require.NotNil(t, operation.Migration)
+	require.True(t, operation.Migration.ManualTarget)
+	require.Equal(t, f.nodes[1].ID, operation.Migration.TargetServerID)
+	source, err = f.r.GetServer(ctx, original.ServerID)
+	require.NoError(t, err)
+	require.True(t, source.Enabled, "手动迁移不能顺带停用整个源节点")
+	t.Logf("源节点保持启用且手选第二节点：真实双向流量至少 %d 字节；迁移后已用 %d；旧 URL、旧凭据、旧连接失效，指定节点真实代理回显通过", before.UsedTraffic, migrated.UsedBytes)
+}
+
+func TestVPNRoutingLiveRotateSameNodePreservesBindingAndTraffic(t *testing.T) {
+	f := newVPNLiveFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	user := vpnTestUser(t, f.db, 1)
+	original, err := f.svc.Create(ctx, user, false, user)
+	require.NoError(t, err)
+	created := f.waitApplied(t, ctx, original.ID)
+	oldURL := created.SubscriptionURLs["base64"]
+	require.NotEmpty(t, oldURL)
+	oldPassword := f.password(t, 0, oldURL)
+	oldStream, err := f.connect(0, oldPassword)
+	require.NoError(t, err)
+	defer oldStream.conn.Close()
+	body := []byte("same-node-before-rotation-real-traffic")
+	require.NoError(t, oldStream.echo(body))
+	var before *service.VPNSnapshot
+	vpnLiveWait(t, ctx, "同节点轮换前真实流量采样", func() bool {
+		before, err = f.remote.User(ctx, f.nodes[0], f.creds[0], original.RemoteUsername)
+		return err == nil && before.UploadBytes >= int64(len(body)) && before.DownloadBytes >= int64(len(body))
+	})
+	_, err = f.svc.Rotate(ctx, original.ID, user, original.ServerID)
+	require.NoError(t, err)
+	rotated := f.waitApplied(t, ctx, original.ID)
+	require.Equal(t, original.ID, rotated.ID)
+	require.Equal(t, original.ServerID, rotated.ServerID)
+	require.Equal(t, original.OwnerRef, rotated.OwnerRef)
+	require.Equal(t, original.RemoteUsername, rotated.RemoteUsername)
+	require.Equal(t, original.GroupID, rotated.GroupID)
+	require.Equal(t, original.QuotaBytes, rotated.QuotaBytes)
+	require.GreaterOrEqual(t, rotated.UsedBytes, before.UsedTraffic)
+	require.True(t, rotated.PeriodStart.Equal(*before.PeriodStart) && rotated.PeriodEnd.Equal(*before.PeriodEnd))
+	response, err := f.clients[0].Get(oldURL)
+	require.True(t, err == nil, "旧订阅 HTTP 验证失败")
+	_ = response.Body.Close()
+	require.Equal(t, http.StatusNotFound, response.StatusCode)
+	require.Error(t, oldStream.echo([]byte("same-node-old-connection")))
+	oldCredential, err := f.connect(0, oldPassword)
+	if err == nil {
+		defer oldCredential.conn.Close()
+		err = oldCredential.echo([]byte("same-node-old-password"))
+	}
+	require.Error(t, err, "同节点轮换后旧代理凭据必须失效")
+	newPassword := f.password(t, 0, rotated.SubscriptionURLs["base64"])
+	require.True(t, newPassword != oldPassword, "同节点轮换必须生成新凭据")
+	newStream, err := f.connect(0, newPassword)
+	require.NoError(t, err)
+	defer newStream.conn.Close()
+	require.NoError(t, newStream.echo([]byte("same-node-new-password-real-traffic")))
+	var action string
+	require.NoError(t, f.db.QueryRow(`SELECT action FROM vpn_operations WHERE subscription_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`, original.ID).Scan(&action))
+	require.Equal(t, "revoke", action)
+	var histories int
+	require.NoError(t, f.db.QueryRow(`SELECT count(*) FROM vpn_subscription_binding_history WHERE subscription_id=$1`, original.ID).Scan(&histories))
+	require.Zero(t, histories, "原地轮换不应制造迁移历史")
+	t.Logf("手选当前节点原地轮换：节点/owner/账号/额度/账期保留，已用至少 %d 字节；旧 URL/凭据/连接失效，新凭据真实代理通过", before.UsedTraffic)
 }
 
 func TestVPNRoutingLiveDisabledBeforeDispatchReroutes(t *testing.T) {
