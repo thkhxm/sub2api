@@ -65,6 +65,7 @@
             <div class="mt-auto flex flex-wrap justify-end gap-2 border-t border-gray-200 bg-gray-50/80 px-5 py-3 dark:border-dark-700 dark:bg-dark-900/30">
               <button class="btn btn-secondary" :disabled="busy" @click="openServer(server)">{{ t('vpn.editServer') }}</button>
               <button class="btn btn-secondary" :disabled="busy" @click="probe(server.id)">{{ t('vpn.probe') }}</button>
+              <button class="btn btn-secondary" :disabled="busy" @click="openEgress(server)">{{ t('vpn.egressSubscription') }}</button>
             </div>
           </article>
         </div>
@@ -125,6 +126,34 @@
         </div>
       </section>
     </div>
+
+    <BaseDialog :show="!!egressServer" :title="t('vpn.egressSubscription')" @close="closeEgress">
+      <div v-if="egressServer" class="space-y-4" data-testid="vpn-egress">
+        <h3 class="break-words font-semibold">{{ egressServer.name }}</h3>
+        <p class="text-sm text-gray-500">{{ t('vpn.egressHint') }}</p>
+        <p v-if="egressLoading" role="status" class="text-sm text-gray-500">{{ t('vpn.loading') }}</p>
+        <p v-if="egressError" role="alert" class="text-sm text-red-600">{{ egressError }}</p>
+        <template v-if="egress">
+          <dl class="grid grid-cols-2 gap-3 text-sm">
+            <div><dt class="text-gray-500">{{ t('vpn.quota') }}</dt><dd>{{ egress.unlimited ? t('vpn.unlimitedTraffic') : '—' }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('vpn.expiry') }}</dt><dd>{{ egress.unlimited ? t('vpn.noExpiry') : '—' }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('vpn.status') }}</dt><dd>{{ state(egress.status) }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('vpn.applyStatus') }}</dt><dd>{{ state(egress.apply_status) }}</dd></div>
+            <div><dt class="text-gray-500">{{ t('vpn.accessState') }}</dt><dd>{{ state(egress.access_state) }}</dd></div>
+          </dl>
+          <p v-if="egress.apply_status === 'failed'" role="alert" class="text-sm text-red-600">{{ t('vpn.egressFailed') }}</p>
+          <p v-else-if="!egressReady" role="status" class="text-sm text-amber-600">{{ t('vpn.egressPending') }}</p>
+          <div v-if="egressReady && egress.subscription_urls" class="space-y-3 border-t border-gray-200 pt-4 dark:border-dark-700">
+            <p class="text-sm text-gray-500">{{ t('vpn.linksSecret') }}</p>
+            <div v-for="format in egressFormats" :key="format" class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-sm">{{ t(`vpn.${format}`) }}</span>
+              <button class="btn btn-secondary" :disabled="!egress.subscription_urls[format]" :aria-label="`${t('vpn.copy')} · ${t(`vpn.${format}`)}`" @click="copyToClipboard(egress.subscription_urls[format])">{{ t('vpn.copy') }}</button>
+            </div>
+          </div>
+        </template>
+      </div>
+      <template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" @click="closeEgress">{{ t('common.close') }}</button><button class="btn btn-primary" :disabled="egressLoading" @click="loadEgress">{{ t('vpn.refresh') }}</button></div></template>
+    </BaseDialog>
 
     <BaseDialog :show="showServer" :title="t(serverId ? 'vpn.editServer' : 'vpn.addServer')" :show-close-button="!busy" :close-on-escape="!busy" @close="closeServer">
       <form class="space-y-4" @submit.prevent="saveServer">
@@ -188,7 +217,7 @@
     </BaseDialog>
 
     <BaseDialog :show="showRevoke" :title="t('vpn.revoke')" :z-index="60" :show-close-button="!busy" :close-on-escape="!busy" @close="showRevoke = false">
-      <p>{{ t('vpn.revokeConfirm') }}</p>
+      <p>{{ t(selectedServerDisabled ? 'vpn.revokeMigrateConfirm' : 'vpn.revokeConfirm') }}</p>
       <p v-if="revokeError" role="alert" class="mt-3 text-sm text-red-600">{{ revokeError }}</p>
       <template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" :disabled="busy" @click="showRevoke = false">{{ t('vpn.cancel') }}</button><button class="btn btn-danger" :disabled="busy" @click="runAction('revoke')">{{ t('vpn.confirm') }}</button></div></template>
     </BaseDialog>
@@ -226,14 +255,23 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import VpnSubscriptionDetails from '@/components/vpn/VpnSubscriptionDetails.vue'
 import VpnTrafficChart from '@/components/vpn/VpnTrafficChart.vue'
-import { adminVpnAPI, type VpnGroup, type VpnServer, type VpnServerInput, type VpnSubscription, type VpnSummary } from '@/api/vpn'
+import { adminVpnAPI, type VpnEgress, type VpnGroup, type VpnServer, type VpnServerInput, type VpnSubscription, type VpnSummary } from '@/api/vpn'
 import { list as listUsers } from '@/api/admin/users'
 import { formatVpnBytes, formatVpnTime, GIB, gibToBytes, vpnError, vpnIsPending } from '@/utils/vpn'
 import { useAppStore } from '@/stores/app'
+import { useClipboard } from '@/composables/useClipboard'
 
 const { t, te, locale } = useI18n()
 const app = useAppStore()
+const { copyToClipboard } = useClipboard()
 const servers = ref<VpnServer[]>([])
+const egressServer = ref<Pick<VpnServer, 'id' | 'name'> | null>(null)
+const egress = ref<VpnEgress | null>(null)
+const egressLoading = ref(false)
+const egressError = ref('')
+const egressFormats = ['clash', 'base64', 'singbox'] as const
+let egressRequest = 0
+const egressReady = computed(() => egress.value?.apply_status === 'applied' && egress.value.access_state === 'allowed' && !!egress.value.subscription_urls)
 const groups = ref<VpnGroup[]>([])
 const showGroup = ref(false)
 const showGroupConfirm = ref(false)
@@ -263,6 +301,7 @@ const editError = ref('')
 const revokeError = ref('')
 const deleteError = ref('')
 const selected = ref<VpnSubscription | null>(null)
+const selectedServerDisabled = computed(() => !!selected.value && servers.value.some(server => server.id === selected.value?.server_id && !server.enabled))
 const showServer = ref(false)
 const showCreate = ref(false)
 const showEdit = ref(false)
@@ -346,6 +385,36 @@ async function load() {
 }
 function filter() { page.value = 1; void load() }
 function changePage(delta: number) { page.value += delta; void load() }
+function openEgress(server: VpnServer) {
+  closeEgress()
+  egressServer.value = { id: server.id, name: server.name }
+  void loadEgress()
+}
+function closeEgress() {
+  egressRequest++
+  egressServer.value = null
+  egress.value = null
+  egressError.value = ''
+  egressLoading.value = false
+}
+async function loadEgress() {
+  if (!egressServer.value || egressLoading.value) return
+  const id = egressServer.value.id
+  const request = ++egressRequest
+  egressLoading.value = true
+  egressError.value = ''
+  egress.value = null
+  const isCurrent = () => !disposed && request === egressRequest && egressServer.value?.id === id
+  try {
+    const result = await adminVpnAPI.ensureEgress(id)
+    if (isCurrent()) egress.value = result
+  } catch {
+    // 远端错误可能包含订阅凭据，只显示固定的本地提示。
+    if (isCurrent()) egressError.value = t('vpn.egressLoadFailed')
+  } finally {
+    if (isCurrent()) egressLoading.value = false
+  }
+}
 function openGroup(group?: VpnGroup) {
   editingGroup.value = group ? { ...group } : null
   groupName.value = group?.name || ''
@@ -540,5 +609,5 @@ watch(showSwitchGroup, () => { switchGroupError.value = '' })
 watch(showRevoke, () => { revokeError.value = '' })
 watch(showDelete, () => { deleteError.value = '' })
 onMounted(() => { void load() })
-onUnmounted(() => { disposed = true; clearTimeout(timer) })
+onUnmounted(() => { disposed = true; closeEgress(); clearTimeout(timer) })
 </script>

@@ -4,18 +4,19 @@ import { ref } from 'vue'
 import UserVpnView from '../user/VpnView.vue'
 import AdminVpnView from '../admin/VpnView.vue'
 import VpnSubscriptionDetails from '@/components/vpn/VpnSubscriptionDetails.vue'
-import type { VpnSubscription } from '@/api/vpn'
+import type { VpnEgress, VpnSubscription } from '@/api/vpn'
 import { GIB, gibToBytes, vpnIsAvailable } from '@/utils/vpn'
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(), create: vi.fn(), refresh: vi.fn(), servers: vi.fn(), summary: vi.fn(), subscriptions: vi.fn(),
   saveServer: vi.fn(), probe: vi.fn(), adminCreate: vi.fn(), update: vi.fn(), action: vi.fn(), delete: vi.fn(),
   groups: vi.fn(), createGroup: vi.fn(), updateGroup: vi.fn(), setUserGroup: vi.fn(),
+  ensureEgress: vi.fn(),
   listUsers: vi.fn(), copy: vi.fn(), success: vi.fn()
 }))
 vi.mock('@/api/vpn', () => ({
   vpnAPI: { get: mocks.get, create: mocks.create, refresh: mocks.refresh },
-  adminVpnAPI: { servers: mocks.servers, summary: mocks.summary, subscriptions: mocks.subscriptions, saveServer: mocks.saveServer, probe: mocks.probe, create: mocks.adminCreate, update: mocks.update, action: mocks.action, delete: mocks.delete, groups: mocks.groups, createGroup: mocks.createGroup, updateGroup: mocks.updateGroup, setUserGroup: mocks.setUserGroup }
+  adminVpnAPI: { servers: mocks.servers, summary: mocks.summary, subscriptions: mocks.subscriptions, saveServer: mocks.saveServer, probe: mocks.probe, create: mocks.adminCreate, update: mocks.update, action: mocks.action, delete: mocks.delete, groups: mocks.groups, createGroup: mocks.createGroup, updateGroup: mocks.updateGroup, setUserGroup: mocks.setUserGroup, ensureEgress: mocks.ensureEgress }
 }))
 vi.mock('@/api/admin/users', () => ({ list: mocks.listUsers, default: { list: mocks.listUsers } }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div><slot /></div>' } }))
@@ -36,6 +37,16 @@ const subscription = (overrides: Partial<VpnSubscription> = {}): VpnSubscription
   created_at: '2026-09-01T00:00:00Z', subscription_urls: { clash: 'https://vpn.example/sub/secret/clash-meta', base64: 'https://vpn.example/sub/secret/v2ray' }, ...overrides
 })
 const server = { id: 3, name: 'Node', base_url: 'https://vpn.example', admin_username: 'integration', enabled: true, healthy: true, health_error: '', personal_user_count: 2, assigned_count: 1, pending_count: 0, last_checked_at: null, created_at: '' }
+const egress = (overrides: Partial<VpnEgress> = {}): VpnEgress => ({
+  username: 'ops_test', status: 'active', apply_status: 'applied', access_state: 'allowed', unlimited: true,
+  subscription_urls: { clash: 'https://vpn.example/sub/ops-secret/clash', base64: 'https://vpn.example/sub/ops-secret/base64', singbox: 'https://vpn.example/sub/ops-secret/singbox' }, ...overrides
+})
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((onResolve, onReject) => { resolve = onResolve; reject = onReject })
+  return { promise, resolve, reject }
+}
 const group = { id: 1, name: '默认组', quota_bytes: 80 * GIB, is_default: true, member_count: 4, subscription_count: 1, pending_count: 0, failed_count: 0 }
 const wrappers: VueWrapper[] = []
 function view(component: typeof UserVpnView | typeof AdminVpnView) {
@@ -66,6 +77,7 @@ beforeEach(() => {
   mocks.update.mockResolvedValue(subscription())
   mocks.action.mockResolvedValue(subscription())
   mocks.adminCreate.mockResolvedValue(subscription())
+  mocks.ensureEgress.mockResolvedValue(egress())
 })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.useRealTimers() })
 
@@ -259,6 +271,116 @@ describe('VPN group administration', () => {
   })
 })
 
+describe('VPN operations subscription', () => {
+  it('retrieves and copies every format from a disabled node without changing personal subscriptions', async () => {
+    mocks.servers.mockResolvedValue([{ ...server, enabled: false }])
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    expect(button(wrapper, 'vpn.egressSubscription').attributes('disabled')).toBeUndefined()
+    await button(wrapper, 'vpn.egressSubscription').trigger('click')
+    await flushPromises()
+    const dialog = wrapper.find('[data-testid="vpn-egress"]')
+    expect(mocks.ensureEgress).toHaveBeenCalledWith(3)
+    expect(dialog.text()).toContain('Node')
+    expect(dialog.text()).toContain('vpn.unlimitedTraffic')
+    expect(dialog.text()).toContain('vpn.noExpiry')
+    expect(dialog.text()).toContain('vpn.states.applied')
+    expect(dialog.text()).toContain('vpn.states.allowed')
+    expect(dialog.html()).not.toContain('ops-secret')
+    const copyButtons = dialog.findAll('button')
+    expect(copyButtons).toHaveLength(3)
+    for (const copyButton of copyButtons) await copyButton.trigger('click')
+    expect(mocks.copy.mock.calls).toEqual(Object.values(egress().subscription_urls!).map(url => [url]))
+    expect(mocks.success).not.toHaveBeenCalled()
+    expect(mocks.action).not.toHaveBeenCalled()
+    expect(mocks.probe).not.toHaveBeenCalled()
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+  it('withholds returned URLs while pending and refreshes the same node with an idempotent request', async () => {
+    mocks.ensureEgress.mockResolvedValueOnce(egress({ apply_status: 'pending' }))
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    await button(wrapper, 'vpn.egressSubscription').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="vpn-egress"]').text()).toContain('vpn.egressPending')
+    expect(wrapper.find('[data-testid="vpn-egress"]').findAll('button')).toHaveLength(0)
+    await wrapper.find('[role="dialog"]').findAll('button').find(item => item.text() === 'vpn.refresh')!.trigger('click')
+    await flushPromises()
+    expect(mocks.ensureEgress.mock.calls).toEqual([[3], [3]])
+    expect(wrapper.find('[data-testid="vpn-egress"]').findAll('button')).toHaveLength(3)
+  })
+  it.each([
+    { access_state: 'blocked' },
+    { subscription_urls: null }
+  ])('withholds copy actions until access and URLs are both ready: %j', async overrides => {
+    mocks.ensureEgress.mockResolvedValue(egress(overrides))
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    await button(wrapper, 'vpn.egressSubscription').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="vpn-egress"]').findAll('button')).toHaveLength(0)
+    expect(mocks.copy).not.toHaveBeenCalled()
+  })
+  it('shows safe failure messages and allows retry without exposing remote credentials', async () => {
+    mocks.ensureEgress.mockResolvedValueOnce(egress({ apply_status: 'failed' }))
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    await button(wrapper, 'vpn.egressSubscription').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').text()).toBe('vpn.egressFailed')
+    expect(wrapper.find('[data-testid="vpn-egress"]').findAll('button')).toHaveLength(0)
+    mocks.ensureEgress.mockRejectedValueOnce({ message: 'https://vpn.example/sub/private-token' })
+    await wrapper.find('[role="dialog"]').findAll('button').find(item => item.text() === 'vpn.refresh')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').text()).toBe('vpn.egressLoadFailed')
+    expect(wrapper.html()).not.toContain('private-token')
+    expect(mocks.success).not.toHaveBeenCalled()
+    await wrapper.find('[role="dialog"]').findAll('button').find(item => item.text() === 'vpn.refresh')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="vpn-egress"]').findAll('button')).toHaveLength(3)
+  })
+  it.each(['resolve', 'reject'] as const)('ignores late %s results after switching or closing dialogs', async outcome => {
+    const first = deferred<VpnEgress>()
+    const second = deferred<VpnEgress>()
+    mocks.servers.mockResolvedValue([server, { ...server, id: 4, name: 'Second node' }])
+    mocks.ensureEgress.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    const openButtons = wrapper.findAll('button').filter(item => item.text() === 'vpn.egressSubscription')
+    await openButtons[0].trigger('click')
+    await openButtons[1].trigger('click')
+    if (outcome === 'resolve') first.resolve(egress())
+    else first.reject({ message: 'old private-token' })
+    await flushPromises()
+    const dialog = wrapper.find('[role="dialog"]')
+    expect(dialog.text()).toContain('Second node')
+    expect(dialog.text()).toContain('vpn.loading')
+    expect(dialog.find('[role="alert"]').exists()).toBe(false)
+    expect(dialog.findAll('button').find(item => item.text() === 'vpn.refresh')!.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="vpn-egress"]').findAll('button')).toHaveLength(0)
+    await button(wrapper, 'common.close').trigger('click')
+    second.resolve(egress())
+    await flushPromises()
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(mocks.ensureEgress.mock.calls).toEqual([[3], [4]])
+  })
+  it('ignores an old result after reopening the same node', async () => {
+    const oldRequest = deferred<VpnEgress>()
+    mocks.ensureEgress.mockReturnValueOnce(oldRequest.promise).mockResolvedValueOnce(egress({ apply_status: 'pending' }))
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    await button(wrapper, 'vpn.egressSubscription').trigger('click')
+    await button(wrapper, 'common.close').trigger('click')
+    await button(wrapper, 'vpn.egressSubscription').trigger('click')
+    await flushPromises()
+    oldRequest.resolve(egress())
+    await flushPromises()
+    expect(wrapper.find('[data-testid="vpn-egress"]').text()).toContain('vpn.egressPending')
+    expect(wrapper.find('[data-testid="vpn-egress"]').findAll('button')).toHaveLength(0)
+  })
+})
+
 describe('VPN administrator flow', () => {
   it('keeps a deletion visible until the archived result confirms success', async () => {
     vi.useFakeTimers()
@@ -354,6 +476,8 @@ describe('VPN administrator flow', () => {
     expect(remaining.text()).toContain('vpn.estimated')
     expect(node.text()).not.toContain('vpn.nodeTrafficHint')
     expect(node.text()).not.toContain('vpn.nodePartialHistory')
+    expect(remaining.classes()).toContain('bg-primary-50')
+    expect(node.findAll('dl > div').find(item => item.text().startsWith('vpn.used'))!.classes()).toContain('bg-gray-50')
     const coverage = node.findAll('dl > div').find(item => item.text().startsWith('vpn.availableFrom'))!
     expect(coverage.find('dd').text()).toContain('2026')
     expect(coverage.find('dd').text()).not.toBe('—')
@@ -423,6 +547,19 @@ describe('VPN administrator flow', () => {
     await flushPromises()
     expect(mocks.action).toHaveBeenCalledWith(8, 'revoke')
     expect(wrapper.text()).toContain('操作处理中')
+  })
+  it('explains migration before rotating a subscription on its disabled source node', async () => {
+    mocks.servers.mockResolvedValue([{ ...server, id: 4, name: 'Destination' }, { ...server, enabled: false }])
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    await button(wrapper, 'vpn.details').trigger('click')
+    await button(wrapper, 'vpn.revoke').trigger('click')
+    expect(wrapper.text()).toContain('vpn.revokeMigrateConfirm')
+    expect(wrapper.text()).not.toContain('vpn.revokeConfirm')
+    expect(mocks.action).not.toHaveBeenCalled()
+    await button(wrapper, 'vpn.confirm').trigger('click')
+    await flushPromises()
+    expect(mocks.action).toHaveBeenCalledWith(8, 'revoke')
   })
   it('retries an existing failed operation while preventing creation of a second account', async () => {
     mocks.subscriptions.mockResolvedValue({ items: [subscription({ apply_status: 'failed', operation_status: 'failed', status: 'provisioning' })], total: 1 })

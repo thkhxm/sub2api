@@ -24,6 +24,8 @@ func registerVPNAdminRoutes(g *gin.RouterGroup, h *handler.Handlers) {
 	v.POST("/servers", h.VPN.SaveServer)
 	v.PUT("/servers/:id", h.VPN.SaveServer)
 	v.POST("/servers/:id/probe", h.VPN.Probe)
+	v.GET("/servers/:id/egress", h.VPN.Egress)
+	v.POST("/servers/:id/egress", h.VPN.Egress)
 	v.GET("/subscriptions", h.VPN.AdminList)
 	v.POST("/subscriptions", h.VPN.AdminCreate)
 	v.PUT("/subscriptions/:id", h.VPN.AdminUpdate)

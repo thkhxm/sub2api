@@ -203,7 +203,7 @@ func (s *VPNService) hydrate(sub *VPNSubscription) error {
 		sub.AccountingStatus = "stale"
 	}
 	sub.SubscriptionURLs = nil
-	if sub.Status == "active" && sub.ApplyStatus == "applied" && sub.AccessState == "allowed" && sub.URLEncrypted != "" {
+	if sub.Status == "active" && sub.ApplyStatus == "applied" && sub.OperationStatus == "succeeded" && sub.AccessState == "allowed" && sub.URLEncrypted != "" {
 		raw, err := s.cipher.Decrypt(sub.URLEncrypted)
 		if err != nil || !strings.HasPrefix(raw, "vpn-url:") {
 			return fmt.Errorf("VPN订阅链接解密失败")
@@ -358,6 +358,21 @@ func (s *VPNService) process(ctx context.Context, o *VPNOperation) {
 			slog.Warn("VPN操作状态持久化失败", "operation_id", o.ID)
 		}
 	}()
+	prepared, err := s.repo.PrepareOperation(ctx, o)
+	if err != nil {
+		message = err.Error()
+		return
+	}
+	o = prepared
+	var payload VPNOperationPayload
+	if json.Unmarshal(o.Payload, &payload) != nil {
+		state, message = "failed", "VPN操作内容无效"
+		return
+	}
+	if payload.Action == "migrate" {
+		state, message = s.processMigration(ctx, o, payload.Migration)
+		return
+	}
 	sub, err := s.repo.GetSubscription(ctx, o.SubscriptionID)
 	if err != nil {
 		message = "订阅记录读取失败"
@@ -372,6 +387,10 @@ func (s *VPNService) process(ctx context.Context, o *VPNOperation) {
 	if err != nil {
 		message = err.Error()
 		state = "failed"
+		return
+	}
+	if err = s.repo.MarkOperationDispatched(ctx, o); err != nil {
+		message = err.Error()
 		return
 	}
 	result, err := s.remote.Submit(ctx, server, cred, sub.RemoteUsername, o.Payload)
@@ -421,6 +440,13 @@ func (s *VPNService) process(ctx context.Context, o *VPNOperation) {
 		}
 		deleteApplied := payload.Action != "delete" || (fresh.Snapshot.Status == "deleted" && fresh.Snapshot.AccessState == "blocked")
 		if fresh.Snapshot.LastOperationID == o.ID && fresh.ApplyStatus == "applied" && deleteApplied {
+			if payload.Action == "create" || payload.Action == "revoke" {
+				current, checkErr := s.repo.GetServer(ctx, fresh.ServerID)
+				if checkErr != nil || !current.Enabled {
+					message = "节点已禁用，等待迁移到可用节点"
+					return
+				}
+			}
 			state = "succeeded"
 		} else {
 			message = "等待节点实际配置生效"

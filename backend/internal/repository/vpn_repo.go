@@ -69,7 +69,7 @@ func (r *vpnRepository) SaveServer(ctx context.Context, v *service.VPNServer) (*
 			return nil, err
 		}
 	} else {
-		result, err := r.db.ExecContext(ctx, `UPDATE vpn_servers SET name=$2,base_url=$3,admin_username=$4,credentials_encrypted=$5,enabled=$6,traffic_quota_bytes=$7,traffic_used_offset_bytes=$8,traffic_offset_period_start=$9,healthy=false,last_checked_at=NULL,updated_at=now() WHERE id=$1 AND (base_url=$3 OR NOT EXISTS(SELECT 1 FROM vpn_subscriptions WHERE server_id=$1))`, v.ID, v.Name, v.BaseURL, v.AdminUsername, v.CredentialsEncrypted, v.Enabled, v.TrafficQuotaBytes, v.TrafficUsedOffsetBytes, v.TrafficOffsetPeriodStart)
+		result, err := r.db.ExecContext(ctx, `UPDATE vpn_servers SET name=$2,base_url=$3,admin_username=$4,credentials_encrypted=$5,enabled=$6,traffic_quota_bytes=$7,traffic_used_offset_bytes=$8,traffic_offset_period_start=$9,healthy=false,last_checked_at=NULL,updated_at=now() WHERE id=$1 AND (base_url=$3 OR (NOT EXISTS(SELECT 1 FROM vpn_subscriptions WHERE server_id=$1) AND NOT EXISTS(SELECT 1 FROM vpn_subscription_binding_history WHERE server_id=$1) AND NOT EXISTS(SELECT 1 FROM vpn_operations WHERE action='migrate' AND status IN ('pending','running','failed') AND (payload->'migration'->>'target_server_id')::bigint=$1)))`, v.ID, v.Name, v.BaseURL, v.AdminUsername, v.CredentialsEncrypted, v.Enabled, v.TrafficQuotaBytes, v.TrafficUsedOffsetBytes, v.TrafficOffsetPeriodStart)
 		if err != nil {
 			return nil, err
 		}
@@ -147,11 +147,14 @@ func (r *vpnRepository) Reserve(ctx context.Context, userID int64, admin bool, a
 		return nil, vpnError(err)
 	}
 	var id int64
-	var deleting bool
-	err = tx.QueryRowContext(ctx, `SELECT id,delete_requested_at IS NOT NULL FROM vpn_subscriptions WHERE user_id=$1 AND deleted_at IS NULL`, userID).Scan(&id, &deleting)
+	var deleting, serverEnabled, migrating bool
+	err = tx.QueryRowContext(ctx, `SELECT s.id,s.delete_requested_at IS NOT NULL,v.enabled,EXISTS(SELECT 1 FROM vpn_operations o WHERE o.subscription_id=s.id AND o.action='migrate' AND o.status IN ('pending','running','failed')) FROM vpn_subscriptions s JOIN vpn_servers v ON v.id=s.server_id WHERE s.user_id=$1 AND s.deleted_at IS NULL`, userID).Scan(&id, &deleting, &serverEnabled, &migrating)
 	if err == nil {
 		if deleting {
 			return nil, service.ErrVPNBusy
+		}
+		if !serverEnabled && !migrating {
+			return nil, service.ErrVPNServerDisabled
 		}
 		if err = tx.Commit(); err != nil {
 			return nil, err
@@ -167,11 +170,7 @@ func (r *vpnRepository) Reserve(ctx context.Context, userID int64, admin bool, a
 	if !admin && !balance {
 		return nil, service.ErrVPNBalance
 	}
-	var serverID int64
-	err = tx.QueryRowContext(ctx, `SELECT v.id FROM vpn_servers v WHERE v.enabled AND v.healthy AND v.last_checked_at>now()-interval '2 minutes' ORDER BY v.personal_user_count+(SELECT count(*) FROM vpn_subscriptions s WHERE s.server_id=v.id AND s.deleted_at IS NULL AND NOT(v.known_owner_refs ? s.owner_ref)),v.last_assigned_at NULLS FIRST,v.id LIMIT 1 FOR UPDATE OF v`).Scan(&serverID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, service.ErrVPNNoServer
-	}
+	serverID, err := selectVPNServer(ctx, tx, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +217,13 @@ func (r *vpnRepository) Queue(ctx context.Context, id, actor int64, p service.VP
 		if p.Action == "delete" {
 			return tx.Commit()
 		}
+		return service.ErrVPNBusy
+	}
+	var migrating bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM vpn_operations WHERE subscription_id=$1 AND action='migrate' AND status IN ('pending','running','failed'))`, id).Scan(&migrating); err != nil {
+		return err
+	}
+	if migrating {
 		return service.ErrVPNBusy
 	}
 	if p.Action == "delete" {
@@ -279,7 +285,7 @@ func (r *vpnRepository) Retry(ctx context.Context, id int64) error {
 func (r *vpnRepository) Claim(ctx context.Context) (*service.VPNOperation, error) {
 	var o service.VPNOperation
 	o.LeaseToken = uuid.NewString()
-	err := r.db.QueryRowContext(ctx, `UPDATE vpn_operations SET status='running',lease_until=now()+interval '90 seconds',lease_token=$1,attempts=attempts+1 WHERE id=(SELECT id FROM vpn_operations WHERE status IN ('pending','running') AND available_at<=now() AND (lease_until IS NULL OR lease_until<now()) ORDER BY available_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,subscription_id,payload,attempts`, o.LeaseToken).Scan(&o.ID, &o.SubscriptionID, &o.Payload, &o.Attempts)
+	err := r.db.QueryRowContext(ctx, `UPDATE vpn_operations SET status='running',lease_until=now()+interval '90 seconds',lease_token=$1,attempts=attempts+1 WHERE id=(SELECT id FROM vpn_operations WHERE status IN ('pending','running') AND available_at<=now() AND (lease_until IS NULL OR lease_until<now()) ORDER BY available_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,subscription_id,payload,attempts,dispatched`, o.LeaseToken).Scan(&o.ID, &o.SubscriptionID, &o.Payload, &o.Attempts, &o.Dispatched)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -362,7 +368,7 @@ func (r *vpnRepository) RequestRefresh(ctx context.Context, id int64) (bool, err
 var _ service.VPNRepository = (*vpnRepository)(nil)
 
 func (r *vpnRepository) UserOwnerRefs(ctx context.Context, userID int64) (map[int64][]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT server_id,owner_ref FROM vpn_subscriptions WHERE user_id=$1 ORDER BY server_id,id`, userID)
+	rows, err := r.db.QueryContext(ctx, `SELECT server_id,owner_ref FROM vpn_subscriptions WHERE user_id=$1 UNION SELECT server_id,owner_ref FROM vpn_subscription_binding_history WHERE user_id=$1 ORDER BY server_id,owner_ref`, userID)
 	if err != nil {
 		return nil, err
 	}

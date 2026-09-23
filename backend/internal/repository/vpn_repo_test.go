@@ -21,6 +21,10 @@ import (
 
 // 必须使用显式指定的隔离数据库；缺少数据库直接失败，不跳过验收。
 func vpnTestRepository(t *testing.T) (*vpnRepository, *sql.DB) {
+	return vpnTestRepositoryMigrations(t, true)
+}
+
+func vpnTestRepositoryMigrations(t *testing.T, routing bool) (*vpnRepository, *sql.DB) {
 	t.Helper()
 	dsn := os.Getenv("VPN_TEST_DSN")
 	require.NotEmpty(t, dsn, "设置 VPN_TEST_DSN 为隔离 PostgreSQL 测试库")
@@ -58,6 +62,12 @@ func vpnTestRepository(t *testing.T) (*vpnRepository, *sql.DB) {
 	require.NoError(t, e)
 	_, e = db.Exec(string(migration))
 	require.NoError(t, e)
+	if routing {
+		migration, e = os.ReadFile("../../migrations/241_vpn_node_routing.sql")
+		require.NoError(t, e)
+		_, e = db.Exec(string(migration))
+		require.NoError(t, e)
+	}
 	return &vpnRepository{db: db}, db
 }
 func vpnTestUser(t *testing.T, db *sql.DB, balance int) int64 {

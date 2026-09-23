@@ -12,11 +12,12 @@ const VPNDefaultQuota int64 = 80 * 1024 * 1024 * 1024
 const VPNMaxQuota int64 = 9007199254740991
 
 var (
-	ErrVPNNotFound = infraerrors.NotFound("VPN_NOT_FOUND", "VPN订阅或节点不存在")
-	ErrVPNNoServer = infraerrors.ServiceUnavailable("VPN_NO_SERVER", "暂无可用VPN节点")
-	ErrVPNBalance  = infraerrors.Forbidden("VPN_BALANCE_REQUIRED", "可用余额必须大于0才能自助开通")
-	ErrVPNBusy     = infraerrors.Conflict("VPN_BUSY", "订阅仍有未完成操作，请等待或重试原操作")
-	ErrVPNInvalid  = infraerrors.BadRequest("VPN_INVALID", "VPN配置或请求参数无效")
+	ErrVPNNotFound       = infraerrors.NotFound("VPN_NOT_FOUND", "VPN订阅或节点不存在")
+	ErrVPNNoServer       = infraerrors.ServiceUnavailable("VPN_NO_SERVER", "暂无可用VPN节点")
+	ErrVPNBalance        = infraerrors.Forbidden("VPN_BALANCE_REQUIRED", "可用余额必须大于0才能自助开通")
+	ErrVPNBusy           = infraerrors.Conflict("VPN_BUSY", "订阅仍有未完成操作，请等待或重试原操作")
+	ErrVPNInvalid        = infraerrors.BadRequest("VPN_INVALID", "VPN配置或请求参数无效")
+	ErrVPNServerDisabled = infraerrors.Conflict("VPN_SERVER_DISABLED", "订阅所在节点已禁用，请管理员轮换凭据迁移到可用节点")
 )
 
 type VPNServer struct {
@@ -62,6 +63,7 @@ type VPNCredentials struct {
 	CAPEM    string `json:"ca_pem"`
 }
 type VPNServerMeta struct {
+	Capabilities      []string        `json:"capabilities,omitempty"`
 	APIVersion        string          `json:"api_version"`
 	Healthy           bool            `json:"healthy"`
 	PersonalUserCount int             `json:"personal_user_count"`
@@ -166,11 +168,13 @@ type VPNSubscription struct {
 	QuotaSyncNeeded   bool              `json:"quota_sync_needed"`
 }
 type VPNOperationPayload struct {
-	OperationID string `json:"operation_id"`
-	OwnerRef    string `json:"owner_ref"`
-	Action      string `json:"action"`
-	DataLimit   *int64 `json:"data_limit,omitempty"`
-	Enabled     *bool  `json:"enabled,omitempty"`
+	OperationID  string           `json:"operation_id"`
+	OwnerRef     string           `json:"owner_ref"`
+	Action       string           `json:"action"`
+	DataLimit    *int64           `json:"data_limit,omitempty"`
+	Enabled      *bool            `json:"enabled,omitempty"`
+	InitialUsage *VPNInitialUsage `json:"initial_usage,omitempty"`
+	Migration    *VPNMigration    `json:"migration,omitempty"`
 }
 type VPNOperation struct {
 	ID             string
@@ -178,6 +182,7 @@ type VPNOperation struct {
 	Payload        json.RawMessage
 	LeaseToken     string
 	Attempts       int
+	Dispatched     bool
 }
 type VPNRemoteOperation struct {
 	OperationID string  `json:"operation_id"`
@@ -219,6 +224,11 @@ type VPNSummary struct {
 }
 
 type VPNRepository interface {
+	PrepareOperation(context.Context, *VPNOperation) (*VPNOperation, error)
+	MarkOperationDispatched(context.Context, *VPNOperation) error
+	CheckpointMigration(context.Context, *VPNOperation, *VPNMigration) error
+	RetargetMigration(context.Context, *VPNOperation, *VPNMigration) (*VPNMigration, error)
+	CompleteMigration(context.Context, *VPNOperation, *VPNMigration, VPNSnapshot, string) error
 	ListServers(context.Context) ([]VPNServer, error)
 	GetServer(context.Context, int64) (*VPNServer, error)
 	SaveServer(context.Context, *VPNServer) (*VPNServer, error)

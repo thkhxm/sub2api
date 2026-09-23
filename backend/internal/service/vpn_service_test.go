@@ -27,6 +27,13 @@ type vpnServiceTestRepo struct {
 	finishOperation string
 }
 
+func (r *vpnServiceTestRepo) PrepareOperation(_ context.Context, o *VPNOperation) (*VPNOperation, error) {
+	return o, nil
+}
+func (r *vpnServiceTestRepo) MarkOperationDispatched(_ context.Context, _ *VPNOperation) error {
+	return nil
+}
+
 func (r *vpnServiceTestRepo) GetServer(context.Context, int64) (*VPNServer, error) {
 	v := *r.server
 	return &v, nil
@@ -92,7 +99,7 @@ func vpnServiceFixture(t *testing.T) (*VPNService, *vpnServiceTestRepo, *vpnServ
 	owner := uuid.NewString()
 	now := time.Now()
 	x := &VPNSnapshot{Username: "pc_test", OwnerRef: owner, Status: "active", ApplyStatus: "applied", AccessState: "allowed", SubscriptionURL: "https://node.invalid/sub/private-token", DataLimit: VPNDefaultQuota, UploadBytes: 10, DownloadBytes: 20, UsedTraffic: 30, AccountingStatus: "ok", SampledAt: &now, LastOperationID: id}
-	repo := &vpnServiceTestRepo{server: &VPNServer{ID: 1, BaseURL: "https://node.invalid", CredentialsEncrypted: encrypted}, sub: &VPNSubscription{ID: 1, ServerID: 1, OwnerRef: owner, RemoteUsername: x.Username, QuotaBytes: VPNDefaultQuota}}
+	repo := &vpnServiceTestRepo{server: &VPNServer{ID: 1, Enabled: true, BaseURL: "https://node.invalid", CredentialsEncrypted: encrypted}, sub: &VPNSubscription{ID: 1, ServerID: 1, OwnerRef: owner, RemoteUsername: x.Username, QuotaBytes: VPNDefaultQuota}}
 	remote := &vpnServiceTestRemote{snapshot: x, submit: &VPNRemoteOperation{OperationID: id, Status: "succeeded"}}
 	return NewVPNService(repo, cipher, remote), repo, remote
 }
@@ -124,7 +131,7 @@ func TestVPNServiceHydrateVisibilityAndStaleness(t *testing.T) {
 		status, apply, access string
 		visible               bool
 	}{{"active", "applied", "allowed", true}, {"active", "pending", "allowed", false}, {"disabled", "applied", "blocked", false}, {"limited", "applied", "blocked", false}, {"active", "failed", "unknown", false}} {
-		sub := &VPNSubscription{Status: state.status, ApplyStatus: state.apply, AccessState: state.access, URLEncrypted: encrypted, QuotaBytes: VPNDefaultQuota, Snapshot: *remote.snapshot, SyncedAt: &now}
+		sub := &VPNSubscription{Status: state.status, ApplyStatus: state.apply, OperationStatus: "succeeded", AccessState: state.access, URLEncrypted: encrypted, QuotaBytes: VPNDefaultQuota, Snapshot: *remote.snapshot, SyncedAt: &now}
 		require.NoError(t, svc.hydrate(sub))
 		require.Equal(t, state.visible, len(sub.SubscriptionURLs) > 0)
 		require.Equal(t, int64(30), sub.UsedBytes)
@@ -234,7 +241,7 @@ func TestVPNServiceRejectsMismatchedPolledOperation(t *testing.T) {
 	svc, repo, remote := vpnServiceFixture(t)
 	remote.submit.Status = "pending"
 	remote.polled = &VPNRemoteOperation{OperationID: uuid.NewString(), Status: "succeeded"}
-	svc.process(context.Background(), &VPNOperation{ID: remote.snapshot.LastOperationID, SubscriptionID: 1})
+	svc.process(context.Background(), &VPNOperation{ID: remote.snapshot.LastOperationID, SubscriptionID: 1, Payload: json.RawMessage(`{"action":"update"}`)})
 	require.NotEqual(t, "succeeded", repo.finishState, "其他操作的轮询结果不能完成当前操作")
 	require.Zero(t, repo.savedCount, "轮询归属不符时不应消费快照")
 }

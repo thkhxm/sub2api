@@ -107,6 +107,14 @@ func (h *VPNHandler) Probe(c *gin.Context) {
 	v, e := h.svc.Probe(c.Request.Context(), id)
 	vpnReply(c, v, e)
 }
+func (h *VPNHandler) Egress(c *gin.Context) {
+	id := vpnID(c)
+	if id == 0 {
+		return
+	}
+	v, err := h.svc.Egress(c.Request.Context(), id, c.Request.Method == "POST")
+	vpnReply(c, v, err)
+}
 func (h *VPNHandler) AdminList(c *gin.Context) {
 	page, _ := strconv.Atoi(c.Query("page"))
 	size, _ := strconv.Atoi(c.Query("page_size"))

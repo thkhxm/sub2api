@@ -50,6 +50,15 @@ export interface VpnServerInput {
   traffic_used_offset_bytes?: number
 }
 
+export interface VpnEgress {
+  username: string
+  status: string
+  apply_status: string
+  access_state: string
+  unlimited: boolean
+  subscription_urls: { clash: string; base64: string; singbox: string } | null
+}
+
 export interface VpnServer {
   id: number
   name: string
@@ -140,6 +149,8 @@ export const adminVpnAPI = {
     ? (await apiClient.put<VpnServer>(`/admin/vpn/servers/${id}`, input)).data
     : (await apiClient.post<VpnServer>('/admin/vpn/servers', input)).data,
   probe: async (id: number) => (await apiClient.post<VpnServer>(`/admin/vpn/servers/${id}/probe`)).data,
+  egress: async (id: number) => (await apiClient.get<VpnEgress>(`/admin/vpn/servers/${id}/egress`)).data,
+  ensureEgress: async (id: number) => (await apiClient.post<VpnEgress>(`/admin/vpn/servers/${id}/egress`)).data,
   summary: async () => (await apiClient.get<VpnSummary>('/admin/vpn/summary')).data,
   subscriptions: async (params: { page: number; page_size: number; q?: string; server_id?: number; status?: string }) =>
     (await apiClient.get<{ items: VpnSubscription[]; total: number; page: number; page_size: number }>('/admin/vpn/subscriptions', { params })).data,
