@@ -214,7 +214,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 	if account != nil && account.IsOpenAI() {
 		responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)
-		normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesWebSocketCompatibilityBody(body, account, responsesLite)
+		normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesCompatibilityBodyWithOptions(body, account, openAIResponsesCompatibilityOptions{
+			Config:        s.cfg,
+			ResponsesLite: responsesLite,
+			Compact:       isOpenAIResponsesCompactPath(c),
+		})
 		if normalizeErr != nil {
 			return nil, fmt.Errorf("normalize passthrough Responses compatibility: %w", normalizeErr)
 		}
@@ -1933,6 +1937,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	responseFailedPending := false
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
+	// Passthrough leaves upstream events untouched; the tracker only learns the
+	// upstream created_at so a synthesized response.failed matches the stream.
+	var createdAtTracker responsesCreatedAtStamper
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 
 	streamInterval := time.Duration(0)
@@ -2059,7 +2066,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if !writePendingLines() {
 			return
 		}
-		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, bareErrorPayload, failedMessage)); err != nil {
+		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtTracker.Value(), bareErrorPayload, failedMessage)); err != nil {
 			clientDisconnected = true
 			return
 		}
@@ -2146,6 +2153,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 			}
 			eventType := effectiveOpenAISSEEventType(dataBytes, rawEventType)
+			createdAtTracker.Observe(dataBytes, eventType)
 			if codexFailureTerminal && sawBareError && !sawResponseFailed && eventType != "response.failed" {
 				suppressCurrentEvent = true
 			}
