@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -53,6 +54,7 @@ func TestCodexDirectImagesRouting(t *testing.T) {
 }
 
 func TestCodexDirectImagesMappingBeforeRouting(t *testing.T) {
+	t.Setenv("SUB2API_IMAGES_MAIN_MODEL", "")
 	for _, accountType := range []string{AccountTypeOAuth, AccountTypeSetupToken} {
 		t.Run(accountType, func(t *testing.T) {
 			body := []byte(`{"model":"gpt-image-1","prompt":"draw"}`)
@@ -75,7 +77,7 @@ func TestCodexDirectImagesMappingBeforeRouting(t *testing.T) {
 		body, target, err := buildOpenAIImagesOAuthPayload(&OpenAIImagesRequest{Prompt: "draw"}, model)
 		require.NoError(t, err)
 		require.Equal(t, chatgptCodexURL, target)
-		require.Equal(t, "gpt-5.6-luna", gjson.GetBytes(body, "model").String())
+		require.Equal(t, config.DefaultOpenAIImagesResponsesModel, gjson.GetBytes(body, "model").String())
 		require.Equal(t, model, gjson.GetBytes(body, "tools.0.model").String())
 	}
 }

@@ -88,7 +88,7 @@ func (r *vpnRepository) PrepareOperation(ctx context.Context, o *service.VPNOper
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(821407238)`); err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func (r *vpnRepository) MarkOperationDispatched(ctx context.Context, o *service.
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	s, _, p, err := lockVPNOperation(ctx, tx, o)
 	if err != nil {
 		return err
@@ -201,7 +201,7 @@ func (r *vpnRepository) CheckpointMigration(ctx context.Context, o *service.VPNO
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	s, current, p, err := lockVPNOperation(ctx, tx, o)
 	if err != nil {
 		return err
@@ -257,7 +257,7 @@ func (r *vpnRepository) RetargetMigration(ctx context.Context, o *service.VPNOpe
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(821407238)`); err != nil {
 		return nil, err
 	}
@@ -338,7 +338,7 @@ func (r *vpnRepository) CompleteMigration(ctx context.Context, o *service.VPNOpe
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	s, current, p, err := lockVPNOperation(ctx, tx, o)
 	if err != nil {
 		return err

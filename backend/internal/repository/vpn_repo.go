@@ -54,7 +54,7 @@ func (r *vpnRepository) ListServers(ctx context.Context) ([]service.VPNServer, e
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	list := []service.VPNServer{}
 	for rows.Next() {
 		v, e := scanVPNServer(rows)
@@ -172,7 +172,7 @@ func (r *vpnRepository) Reserve(ctx context.Context, userID int64, admin bool, a
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	// 统一串行节点选择和预占；远程请求在事务外执行。
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(821407238)`); err != nil {
 		return nil, err
@@ -241,7 +241,7 @@ func (r *vpnRepository) Queue(ctx context.Context, id, actor int64, p service.VP
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if p.TargetServerID > 0 {
 		if p.Action != "revoke" {
 			return service.ErrVPNInvalid
@@ -332,7 +332,7 @@ func (r *vpnRepository) Retry(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var found int64
 	if err = tx.QueryRowContext(ctx, `SELECT id FROM vpn_subscriptions WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, id).Scan(&found); err != nil {
 		return vpnError(err)
@@ -395,7 +395,7 @@ func (r *vpnRepository) List(ctx context.Context, f service.VPNFilter) ([]servic
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	list := []service.VPNSubscription{}
 	for rows.Next() {
 		s, e := scanVPNSub(rows)
@@ -416,7 +416,7 @@ func (r *vpnRepository) ids(ctx context.Context, q string) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	ids := []int64{}
 	for rows.Next() {
 		var id int64
@@ -449,7 +449,7 @@ func (r *vpnRepository) UserOwnerRefs(ctx context.Context, userID int64) (map[in
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := map[int64][]string{}
 	for rows.Next() {
 		var server int64

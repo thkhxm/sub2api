@@ -108,7 +108,7 @@ LIMIT $2`
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return collectBalanceRequests(rows)
 }
 
@@ -143,7 +143,7 @@ LIMIT $%d OFFSET $%d`, strings.TrimSpace(balanceRequestColumns), where, len(list
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	list, err := collectBalanceRequests(rows)
 	if err != nil {
 		return nil, 0, err

@@ -108,7 +108,8 @@ func TestVPNEgressRemoteUsesAuthenticatedReadAndEnsureMethods(t *testing.T) {
 	}))
 	defer server.Close()
 	ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
-	client := NewMarzbanVPNClient().(*MarzbanVPNClient)
+	client, ok := NewMarzbanVPNClient().(*MarzbanVPNClient)
+	require.True(t, ok)
 	for _, ensure := range []bool{false, true} {
 		result, err := client.Egress(context.Background(), &VPNServer{BaseURL: server.URL, AdminUsername: "admin"}, VPNCredentials{Password: "private", CAPEM: ca}, ensure)
 		require.NoError(t, err)

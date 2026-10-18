@@ -17,6 +17,7 @@ func TestVPNTrafficPeriodAndOffset(t *testing.T) {
 	require.Equal(t, "2026-09-21T16:00:00Z", end.Format(time.RFC3339))
 	start, end = vpnPeriodBounds(end)
 	require.Equal(t, "2026-09-21T16:00:00Z", start.Format(time.RFC3339))
+	require.Equal(t, "2026-10-21T16:00:00Z", end.Format(time.RFC3339))
 	now := time.Now()
 	start, end = vpnPeriodBounds(now)
 	used := int64(30)

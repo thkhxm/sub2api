@@ -26,7 +26,7 @@ func (r *vpnRepository) ListVPNGroups(ctx context.Context) ([]service.VPNGroup, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	groups := []service.VPNGroup{}
 	for rows.Next() {
 		g, e := scanVPNGroup(rows)
@@ -42,7 +42,7 @@ func (r *vpnRepository) SaveVPNGroup(ctx context.Context, id int64, in service.V
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(821407238)`); err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func (r *vpnRepository) SetUserVPNGroup(ctx context.Context, userID, groupID int
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(821407238)`); err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func (r *vpnRepository) QueueQuotaSync(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var quota int64
 	var owner string
 	var needed bool

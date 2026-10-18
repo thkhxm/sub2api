@@ -397,16 +397,23 @@ func TestHandleResponsesStreamingResponse_NormalizesTerminalUsage(t *testing.T) 
 				require.Equal(t, tt.wantCacheCreation, result.Usage.CacheCreationInputTokens)
 
 				var completed apicompat.ResponsesStreamEvent
+				doneCount := 0
 				for _, line := range strings.Split(rec.Body.String(), "\n") {
 					if !strings.HasPrefix(line, "data: ") {
 						continue
 					}
+					payload := strings.TrimPrefix(line, "data: ")
+					if payload == "[DONE]" {
+						doneCount++
+						continue
+					}
 					var event apicompat.ResponsesStreamEvent
-					require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event))
+					require.NoError(t, json.Unmarshal([]byte(payload), &event))
 					if event.Type == "response.completed" {
 						completed = event
 					}
 				}
+				require.Equal(t, 1, doneCount)
 				require.NotNil(t, completed.Response)
 				require.NotNil(t, completed.Response.Usage)
 				require.Equal(t, tt.wantInput+tt.wantCached+tt.wantCacheCreation, completed.Response.Usage.InputTokens)

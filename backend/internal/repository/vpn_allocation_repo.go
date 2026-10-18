@@ -54,7 +54,7 @@ WHERE s.deleted_at IS NULL AND o.action='migrate' AND o.status IN ('pending','ru
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, quota int64
 		var owner string
@@ -141,13 +141,13 @@ ORDER BY v.id FOR UPDATE OF v`, req.SourceID, req.ExcludedID, req.RequestedID)
 	for rows.Next() {
 		server, err := scanVPNServer(rows)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return 0, err
 		}
 		servers = append(servers, *server)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return 0, err
 	}

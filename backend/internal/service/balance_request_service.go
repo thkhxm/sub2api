@@ -26,9 +26,9 @@ const (
 )
 
 var (
-	ErrBalanceRequestNotFound      = infraerrors.NotFound("BALANCE_REQUEST_NOT_FOUND", "balance request not found")
-	ErrBalanceRequestNotPending    = infraerrors.Conflict("BALANCE_REQUEST_NOT_PENDING", "balance request is not pending; cannot modify")
-	ErrBalanceRequestAmountRange   = infraerrors.BadRequest("BALANCE_REQUEST_AMOUNT_RANGE", "amount must be in (0, 10000]")
+	ErrBalanceRequestNotFound       = infraerrors.NotFound("BALANCE_REQUEST_NOT_FOUND", "balance request not found")
+	ErrBalanceRequestNotPending     = infraerrors.Conflict("BALANCE_REQUEST_NOT_PENDING", "balance request is not pending; cannot modify")
+	ErrBalanceRequestAmountRange    = infraerrors.BadRequest("BALANCE_REQUEST_AMOUNT_RANGE", "amount must be in (0, 10000]")
 	ErrBalanceRequestTooManyPending = infraerrors.Conflict("BALANCE_REQUEST_TOO_MANY_PENDING", "you have too many pending balance requests; wait for admin review")
 )
 
