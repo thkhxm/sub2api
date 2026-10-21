@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"math/big"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
@@ -94,8 +95,8 @@ func applyVPNAllocations(servers []service.VPNServer, desired map[int64]map[stri
 		}
 		server.AllocationQuotaBytes = &allocated
 		if server.TrafficQuotaBytes > 0 {
-			available := max(server.TrafficQuotaBytes-allocated, 0)
-			ratio := float64(allocated) / float64(server.TrafficQuotaBytes)
+			available := max(server.TrafficQuotaBytes/server.VPNTrafficMultiplier()-allocated, 0)
+			ratio := float64(allocated) * float64(server.VPNTrafficMultiplier()) / float64(server.TrafficQuotaBytes)
 			server.AllocationAvailableBytes, server.AllocationRatio = &available, &ratio
 		}
 	}
@@ -111,7 +112,11 @@ func hydrateVPNAllocations(ctx context.Context, q vpnAllocationQueryer, servers 
 }
 
 func lessVPNAllocation(a, b *service.VPNServer) bool {
-	ratio := new(big.Rat).SetFrac64(*a.AllocationQuotaBytes, a.TrafficQuotaBytes).Cmp(new(big.Rat).SetFrac64(*b.AllocationQuotaBytes, b.TrafficQuotaBytes))
+	aRatio := new(big.Rat).SetFrac64(*a.AllocationQuotaBytes, a.TrafficQuotaBytes)
+	aRatio.Mul(aRatio, new(big.Rat).SetInt64(a.VPNTrafficMultiplier()))
+	bRatio := new(big.Rat).SetFrac64(*b.AllocationQuotaBytes, b.TrafficQuotaBytes)
+	bRatio.Mul(bRatio, new(big.Rat).SetInt64(b.VPNTrafficMultiplier()))
+	ratio := aRatio.Cmp(bRatio)
 	if ratio != 0 {
 		return ratio < 0
 	}
@@ -159,7 +164,7 @@ ORDER BY v.id FOR UPDATE OF v`, req.SourceID, req.ExcludedID, req.RequestedID)
 	var selected *service.VPNServer
 	for i := range servers {
 		server := &servers[i]
-		if server.AllocationQuotaBytes == nil || *server.AllocationQuotaBytes > server.TrafficQuotaBytes {
+		if server.AllocationQuotaBytes == nil || *server.AllocationQuotaBytes > server.TrafficQuotaBytes/server.VPNTrafficMultiplier() || server.TrafficExhausted(time.Now()) {
 			continue
 		}
 		alreadyReserved := int64(0)
@@ -167,7 +172,7 @@ ORDER BY v.id FOR UPDATE OF v`, req.SourceID, req.ExcludedID, req.RequestedID)
 			alreadyReserved = max(server.AllocationSnapshot.ManagedQuotaBytes[req.OwnerRef], desired[server.ID][req.OwnerRef])
 		}
 		additional := max(req.RequiredQuota-alreadyReserved, 0)
-		if additional > server.TrafficQuotaBytes-*server.AllocationQuotaBytes {
+		if additional > server.TrafficQuotaBytes/server.VPNTrafficMultiplier()-*server.AllocationQuotaBytes {
 			continue
 		}
 		if selected == nil || lessVPNAllocation(server, selected) {

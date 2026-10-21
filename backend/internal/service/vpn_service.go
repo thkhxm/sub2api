@@ -35,20 +35,23 @@ func (s *VPNService) Start() {
 	s.start.Do(func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.cancel = cancel
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			ticker := time.NewTicker(5 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					s.Tick(ctx)
+		// 各类后台工作独立定时，慢节点不延迟其他队列的下一轮。
+		for _, work := range []func(context.Context){s.probeServers, s.processOperations, s.syncSubscriptions, s.processRevocations} {
+			s.wg.Add(1)
+			go func(work func(context.Context)) {
+				defer s.wg.Done()
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						work(ctx)
+					}
 				}
-			}
-		}()
+			}(work)
+		}
 	})
 }
 func (s *VPNService) Stop() {
@@ -77,7 +80,7 @@ func (s *VPNService) SaveServer(ctx context.Context, id int64, in VPNServerInput
 		return nil, err
 	}
 	k := VPNCredentials{}
-	v := &VPNServer{ID: id}
+	v := &VPNServer{ID: id, TrafficMultiplier: 2}
 	if id > 0 {
 		old, err := s.repo.GetServer(ctx, id)
 		if err != nil {
@@ -96,6 +99,12 @@ func (s *VPNService) SaveServer(ctx context.Context, id int64, in VPNServerInput
 		if value != nil && (*value < 0 || *value > VPNMaxQuota) {
 			return nil, ErrVPNInvalid
 		}
+	}
+	if in.TrafficMultiplier != nil {
+		if *in.TrafficMultiplier != 1 && *in.TrafficMultiplier != 2 {
+			return nil, ErrVPNInvalid
+		}
+		v.TrafficMultiplier = *in.TrafficMultiplier
 	}
 	if in.TrafficQuotaBytes != nil {
 		v.TrafficQuotaBytes = *in.TrafficQuotaBytes
@@ -272,10 +281,14 @@ func (s *VPNService) Revoke(ctx context.Context, id, actor int64) (*VPNSubscript
 	return s.Get(ctx, id)
 }
 func (s *VPNService) Rotate(ctx context.Context, id, actor, targetServerID int64) (*VPNSubscription, error) {
+	return s.RotateWithOptions(ctx, id, actor, targetServerID, false)
+}
+
+func (s *VPNService) RotateWithOptions(ctx context.Context, id, actor, targetServerID int64, offline bool) (*VPNSubscription, error) {
 	if targetServerID <= 0 {
 		return nil, ErrVPNInvalid
 	}
-	if err := s.repo.Queue(ctx, id, actor, VPNOperationPayload{Action: "revoke", TargetServerID: targetServerID}); err != nil {
+	if err := s.repo.Queue(ctx, id, actor, VPNOperationPayload{Action: "revoke", TargetServerID: targetServerID, AllowOfflineMigration: offline}); err != nil {
 		return nil, err
 	}
 	return s.Get(ctx, id)
@@ -330,16 +343,21 @@ func (s *VPNService) Refresh(ctx context.Context, id int64) (*VPNSubscription, e
 	}
 	if allowed {
 		if err = s.sync(ctx, id); err != nil {
-			_ = s.repo.MarkSyncError(ctx, id, err.Error())
+			s.recordSyncError(ctx, id, err)
 		}
 	}
 	return s.Get(ctx, id)
 }
-func (s *VPNService) sync(ctx context.Context, id int64) error {
+func (s *VPNService) sync(ctx context.Context, id int64) (err error) {
 	sub, err := s.repo.GetSubscription(ctx, id)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil {
+			err = &vpnSnapshotError{cause: err, serverID: sub.ServerID, owner: sub.OwnerRef, operation: sub.Snapshot.LastOperationID}
+		}
+	}()
 	if sub.DeletedAt != nil {
 		return nil
 	}
@@ -373,9 +391,14 @@ func (s *VPNService) sync(ctx context.Context, id int64) error {
 	return s.repo.SaveSnapshot(ctx, id, *x, encrypted)
 }
 func (s *VPNService) process(ctx context.Context, o *VPNOperation) {
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
 	state, message := "pending", ""
 	defer func() {
-		if err := s.repo.Finish(ctx, o, state, message); err != nil && ctx.Err() == nil {
+		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+		defer finishCancel()
+		if err := s.repo.Finish(finishCtx, o, state, message); err != nil && parent.Err() == nil {
 			slog.Warn("VPN操作状态持久化失败", "operation_id", o.ID)
 		}
 	}()
@@ -416,6 +439,7 @@ func (s *VPNService) process(ctx context.Context, o *VPNOperation) {
 	}
 	// 管理员选择的目标属于平台调度字段，不传给节点的个人操作协议。
 	payload.TargetServerID = 0
+	payload.AllowOfflineMigration = false
 	remotePayload, _ := json.Marshal(payload)
 	result, err := s.remote.Submit(ctx, server, cred, sub.RemoteUsername, remotePayload)
 	if err != nil {
@@ -484,52 +508,73 @@ func (s *VPNService) process(ctx context.Context, o *VPNOperation) {
 
 // Tick 将远端操作与用量同步从页面生命周期中解耦。租约保证多实例不会同时投递同一操作。
 func (s *VPNService) Tick(ctx context.Context) {
+	var phases sync.WaitGroup
+	for _, work := range []func(context.Context){s.probeServers, s.processOperations, s.syncSubscriptions, s.processRevocations} {
+		phases.Add(1)
+		go func(work func(context.Context)) { defer phases.Done(); work(ctx) }(work)
+	}
+	phases.Wait()
+}
+func (s *VPNService) probeServers(ctx context.Context) {
 	servers, err := s.repo.ListServers(ctx)
 	if err != nil {
-		if ctx.Err() == nil {
-			slog.Warn("VPN节点列表读取失败")
-		}
 		return
 	}
+	ids := []int64{}
 	for _, v := range servers {
-		if ctx.Err() != nil {
-			return
-		}
 		if v.Enabled && (v.LastCheckedAt == nil || time.Since(*v.LastCheckedAt) > 30*time.Second || v.AllocationSnapshot == nil) {
-			_, _ = s.Probe(ctx, v.ID)
+			ids = append(ids, v.ID)
 		}
 	}
-	quotaIDs, _ := s.repo.QuotaSyncCandidates(ctx)
-	for _, id := range quotaIDs {
+	vpnParallelIDs(ctx, ids, func(c context.Context, id int64) { _, _ = s.Probe(c, id) })
+}
+func (s *VPNService) processOperations(ctx context.Context) {
+	ids, _ := s.repo.QuotaSyncCandidates(ctx)
+	for _, id := range ids {
 		if ctx.Err() != nil {
 			return
 		}
 		_ = s.repo.QueueQuotaSync(ctx, id)
 	}
-	for i := 0; i < 10; i++ {
-		if ctx.Err() != nil {
-			return
-		}
-		op, e := s.repo.Claim(ctx)
-		if e != nil || op == nil {
-			break
-		}
-		s.process(ctx, op)
-	}
-	ids, _ := s.repo.InactiveUserSubscriptions(ctx)
+	ids, _ = s.repo.InactiveUserSubscriptions(ctx)
 	for _, id := range ids {
 		off := false
 		_, _ = s.Update(ctx, id, 0, VPNUpdate{Enabled: &off})
 	}
-	ids, _ = s.repo.SyncCandidates(ctx)
-	for _, id := range ids {
-		if ctx.Err() != nil {
-			return
-		}
-		if err = s.sync(ctx, id); err != nil {
-			_ = s.repo.MarkSyncError(ctx, id, err.Error())
-		}
+	// 工作者空闲时才领取租约，避免排队等待消耗租约。
+	slots := make(chan struct{}, 10)
+	for i := 0; i < 10; i++ {
+		slots <- struct{}{}
 	}
+	close(slots)
+	var workers sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for range slots {
+				if ctx.Err() != nil {
+					return
+				}
+				op, err := s.repo.Claim(ctx)
+				if err != nil || op == nil {
+					return
+				}
+				s.process(ctx, op)
+			}
+		}()
+	}
+	workers.Wait()
+}
+func (s *VPNService) syncSubscriptions(ctx context.Context) {
+	ids, _ := s.repo.SyncCandidates(ctx)
+	vpnParallelIDs(ctx, ids, func(c context.Context, id int64) {
+		if err := s.sync(c, id); err != nil {
+			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			s.recordSyncError(saveCtx, id, err)
+		}
+	})
 }
 
 func (s *VPNService) Groups(ctx context.Context) ([]VPNGroup, error) {
@@ -556,4 +601,49 @@ func (s *VPNService) SetUserGroup(ctx context.Context, userID, groupID int64) (*
 		return nil, ErrVPNInvalid
 	}
 	return s.repo.SetUserVPNGroup(ctx, userID, groupID)
+}
+
+func vpnParallelIDs(ctx context.Context, ids []int64, run func(context.Context, int64)) {
+	jobs := make(chan int64, len(ids))
+	for _, id := range ids {
+		jobs <- id
+	}
+	close(jobs)
+	var workers sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for id := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+				run(callCtx, id)
+				cancel()
+			}
+		}()
+	}
+	workers.Wait()
+}
+
+// 迟到的旧节点错误不能覆盖已经迁移或轮换后的成功状态。
+type vpnSnapshotError struct {
+	cause            error
+	serverID         int64
+	owner, operation string
+}
+
+func (e *vpnSnapshotError) Error() string { return e.cause.Error() }
+func (e *vpnSnapshotError) Unwrap() error { return e.cause }
+func (s *VPNService) recordSyncError(ctx context.Context, id int64, err error) {
+	marker, ok := s.repo.(interface {
+		MarkBindingSyncError(context.Context, int64, int64, string, string, string) error
+	})
+	var binding *vpnSnapshotError
+	if ok && errors.As(err, &binding) {
+		_ = marker.MarkBindingSyncError(ctx, id, binding.serverID, binding.owner, binding.operation, err.Error())
+		return
+	}
+	_ = s.repo.MarkSyncError(ctx, id, err.Error())
 }

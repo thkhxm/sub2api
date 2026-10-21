@@ -11,6 +11,7 @@
     <p v-if="loading" role="status">{{ t('vpn.loading') }}</p>
     <p v-else-if="error" role="alert" class="text-red-600">{{ error }}</p>
     <template v-else-if="result">
+      <p class="text-sm text-gray-500" data-testid="vpn-traffic-basis">{{ t(result.accounting_basis === 'node_transfer' ? 'vpn.trafficBasisNodeTransfer' : 'vpn.trafficBasisUserProxy') }}</p>
       <p v-if="result.unavailable_servers > 0" role="status" class="text-sm text-amber-600">{{ t('vpn.trafficPartial', { count: result.unavailable_servers }) }}</p>
       <p v-else-if="result.partial" role="status" class="text-sm text-amber-600">{{ t('vpn.trafficIncomplete') }}</p>
       <p v-if="hasGaps" class="text-sm text-amber-600">{{ t('vpn.trafficGaps') }}</p>

@@ -8,8 +8,10 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,8 +24,9 @@ type vpnToken struct {
 	expires time.Time
 }
 type MarzbanVPNClient struct {
-	mu     sync.Mutex
-	tokens map[string]vpnToken
+	mu      sync.Mutex
+	tokens  map[string]vpnToken
+	flights map[string]chan struct{}
 }
 
 func NewMarzbanVPNClient() VPNRemote { return &MarzbanVPNClient{tokens: make(map[string]vpnToken)} }
@@ -43,8 +46,10 @@ func vpnHTTPClient(c VPNCredentials) (*http.Client, error) {
 	if c.CAPEM != "" && !roots.AppendCertsFromPEM([]byte(c.CAPEM)) {
 		return nil, ErrVPNInvalid
 	}
-	return &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, Proxy: nil, MaxIdleConns: 2, IdleConnTimeout: 30 * time.Second}, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("VPN节点不允许重定向") }}, nil
+	return &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 10 * time.Second, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, Proxy: nil, MaxIdleConns: 2, IdleConnTimeout: 30 * time.Second}, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("VPN节点不允许重定向") }}, nil
 }
+
+var ErrVPNConnection = errors.New("VPN节点连接失败")
 
 type vpnHTTPError struct{ Status int }
 
@@ -63,7 +68,7 @@ func vpnRequest(ctx context.Context, client *http.Client, method, endpoint, toke
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("VPN节点连接失败")
+		return ErrVPNConnection
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -93,25 +98,48 @@ func (c *MarzbanVPNClient) call(ctx context.Context, s *VPNServer, cred VPNCrede
 	h := sha256.Sum256([]byte(s.BaseURL + "\x00" + s.AdminUsername + "\x00" + cred.Password))
 	key := hex.EncodeToString(h[:])
 	login := func(force bool) (string, error) {
-		// 同一进程串行刷新，避免并发轮询触发节点登录限流。
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if cached := c.tokens[key]; !force && cached.expires.After(time.Now()) {
-			return cached.value, nil
+		// 只合并同一节点的登录请求；网络等待不持有跨节点互斥锁。
+		for {
+			c.mu.Lock()
+			if cached := c.tokens[key]; !force && cached.expires.After(time.Now()) {
+				c.mu.Unlock()
+				return cached.value, nil
+			}
+			if wait := c.flights[key]; wait != nil {
+				c.mu.Unlock()
+				select {
+				case <-wait:
+					force = false
+					continue
+				case <-ctx.Done():
+					return "", ctx.Err()
+				}
+			}
+			if c.flights == nil {
+				c.flights = make(map[string]chan struct{})
+			}
+			done := make(chan struct{})
+			c.flights[key] = done
+			c.mu.Unlock()
+			var result struct {
+				AccessToken string `json:"access_token"`
+			}
+			form := url.Values{"username": {s.AdminUsername}, "password": {cred.Password}}.Encode()
+			err := vpnRequest(ctx, client, "POST", strings.TrimRight(s.BaseURL, "/")+"/api/admin/token", "", "application/x-www-form-urlencoded", []byte(form), &result)
+			if err == nil && result.AccessToken == "" {
+				err = fmt.Errorf("VPN节点未返回登录令牌")
+			}
+			c.mu.Lock()
+			if err == nil {
+				c.tokens[key] = vpnToken{result.AccessToken, time.Now().Add(30 * time.Minute)}
+			}
+			delete(c.flights, key)
+			close(done)
+			c.mu.Unlock()
+			return result.AccessToken, err
 		}
-		var result struct {
-			AccessToken string `json:"access_token"`
-		}
-		form := url.Values{"username": {s.AdminUsername}, "password": {cred.Password}}.Encode()
-		if err := vpnRequest(ctx, client, "POST", strings.TrimRight(s.BaseURL, "/")+"/api/admin/token", "", "application/x-www-form-urlencoded", []byte(form), &result); err != nil {
-			return "", err
-		}
-		if result.AccessToken == "" {
-			return "", fmt.Errorf("VPN节点未返回登录令牌")
-		}
-		c.tokens[key] = vpnToken{result.AccessToken, time.Now().Add(30 * time.Minute)}
-		return result.AccessToken, nil
 	}
+
 	token, err := login(false)
 	if err != nil {
 		return err

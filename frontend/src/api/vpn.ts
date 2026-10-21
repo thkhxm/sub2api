@@ -26,6 +26,8 @@ export interface VpnSubscription {
   accounting_status: string
   last_error: string
   operation_status: string
+  source_revocation_pending: boolean
+  offline_migration_available: boolean
   created_at: string
   delete_requested_at?: string | null
   deleted_at?: string | null
@@ -48,6 +50,7 @@ export interface VpnServerInput {
   enabled: boolean
   traffic_quota_bytes?: number
   traffic_used_offset_bytes?: number
+  traffic_multiplier?: 1 | 2
 }
 
 export interface VpnEgress {
@@ -72,6 +75,7 @@ export interface VpnServer {
   pending_count: number
   last_checked_at: string | null
   created_at: string
+  traffic_multiplier: 1 | 2
   traffic_quota_bytes?: number
   traffic_used_bytes?: number | null
   traffic_remaining_bytes?: number | null
@@ -88,6 +92,7 @@ export interface VpnServer {
 }
 
 export interface VpnDailyTraffic {
+  accounting_basis?: 'node_transfer' | 'user_proxy'
   timezone: string
   start_date: string
   end_date: string
@@ -160,8 +165,8 @@ export const adminVpnAPI = {
   create: async (userId: number) => (await apiClient.post<VpnSubscription>('/admin/vpn/subscriptions', { user_id: userId })).data,
   update: async (id: number, input: { quota_bytes?: number; enabled?: boolean }) =>
     (await apiClient.put<VpnSubscription>(`/admin/vpn/subscriptions/${id}`, input)).data,
-  rotate: async (id: number, targetServerId: number) =>
-    (await apiClient.post<VpnSubscription>(`/admin/vpn/subscriptions/${id}/revoke`, { target_server_id: targetServerId })).data,
+  rotate: async (id: number, targetServerId: number, options?: { allow_offline_migration?: boolean }) =>
+    (await apiClient.post<VpnSubscription>(`/admin/vpn/subscriptions/${id}/revoke`, { target_server_id: targetServerId, ...options })).data,
   action: async (id: number, action: 'refresh' | 'retry') =>
     (await apiClient.post<VpnSubscription>(`/admin/vpn/subscriptions/${id}/${action}`)).data
 }

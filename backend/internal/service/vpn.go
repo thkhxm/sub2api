@@ -37,6 +37,7 @@ type VPNServer struct {
 	LastAssignedAt           *time.Time         `json:"-"`
 	CreatedAt                time.Time          `json:"created_at"`
 	UpdatedAt                time.Time          `json:"-"`
+	TrafficMultiplier        int64              `json:"traffic_multiplier"`
 	TrafficQuotaBytes        int64              `json:"traffic_quota_bytes"`
 	TrafficUsedOffsetBytes   int64              `json:"traffic_used_offset_bytes"`
 	TrafficOffsetPeriodStart *time.Time         `json:"traffic_offset_period_start"`
@@ -60,6 +61,7 @@ type VPNServerInput struct {
 	AdminPassword          string  `json:"admin_password"`
 	CAPEM                  *string `json:"ca_pem"`
 	Enabled                bool    `json:"enabled"`
+	TrafficMultiplier      *int64  `json:"traffic_multiplier"`
 	TrafficQuotaBytes      *int64  `json:"traffic_quota_bytes"`
 	TrafficUsedOffsetBytes *int64  `json:"traffic_used_offset_bytes"`
 }
@@ -128,6 +130,7 @@ type VPNTrafficFilter struct {
 	ServerID, UserID   int64
 }
 type VPNTrafficResponse struct {
+	AccountingBasis    string          `json:"accounting_basis"`
 	Timezone           string          `json:"timezone"`
 	StartDate          string          `json:"start_date"`
 	EndDate            string          `json:"end_date"`
@@ -158,50 +161,53 @@ type VPNSnapshot struct {
 	LastError        *string    `json:"last_error"`
 }
 type VPNSubscription struct {
-	ID                int64             `json:"id"`
-	UserID            int64             `json:"user_id"`
-	UserEmail         string            `json:"user_email"`
-	ServerID          int64             `json:"server_id"`
-	ServerName        string            `json:"server_name"`
-	OwnerRef          string            `json:"-"`
-	RemoteUsername    string            `json:"remote_username"`
-	Enabled           bool              `json:"-"`
-	QuotaBytes        int64             `json:"quota_bytes"`
-	Status            string            `json:"status"`
-	ApplyStatus       string            `json:"apply_status"`
-	AccessState       string            `json:"access_state"`
-	Snapshot          VPNSnapshot       `json:"-"`
-	URLEncrypted      string            `json:"-"`
-	UploadBytes       int64             `json:"upload_bytes"`
-	DownloadBytes     int64             `json:"download_bytes"`
-	UsedBytes         int64             `json:"used_bytes"`
-	RemainingBytes    int64             `json:"remaining_bytes"`
-	PeriodStart       *time.Time        `json:"period_start"`
-	PeriodEnd         *time.Time        `json:"period_end"`
-	NextResetAt       *time.Time        `json:"next_reset_at"`
-	SampledAt         *time.Time        `json:"sampled_at"`
-	SyncedAt          *time.Time        `json:"synced_at"`
-	AccountingStatus  string            `json:"accounting_status"`
-	LastError         string            `json:"last_error"`
-	OperationStatus   string            `json:"operation_status"`
-	CreatedAt         time.Time         `json:"created_at"`
-	SubscriptionURLs  map[string]string `json:"subscription_urls"`
-	DeleteRequestedAt *time.Time        `json:"delete_requested_at"`
-	DeletedAt         *time.Time        `json:"deleted_at"`
-	GroupID           int64             `json:"group_id"`
-	GroupName         string            `json:"group_name"`
-	GroupQuotaBytes   int64             `json:"group_quota_bytes"`
-	QuotaSyncNeeded   bool              `json:"quota_sync_needed"`
+	ID                        int64             `json:"id"`
+	UserID                    int64             `json:"user_id"`
+	UserEmail                 string            `json:"user_email"`
+	ServerID                  int64             `json:"server_id"`
+	ServerName                string            `json:"server_name"`
+	OwnerRef                  string            `json:"-"`
+	RemoteUsername            string            `json:"remote_username"`
+	Enabled                   bool              `json:"-"`
+	QuotaBytes                int64             `json:"quota_bytes"`
+	Status                    string            `json:"status"`
+	ApplyStatus               string            `json:"apply_status"`
+	AccessState               string            `json:"access_state"`
+	Snapshot                  VPNSnapshot       `json:"-"`
+	URLEncrypted              string            `json:"-"`
+	UploadBytes               int64             `json:"upload_bytes"`
+	DownloadBytes             int64             `json:"download_bytes"`
+	UsedBytes                 int64             `json:"used_bytes"`
+	RemainingBytes            int64             `json:"remaining_bytes"`
+	PeriodStart               *time.Time        `json:"period_start"`
+	PeriodEnd                 *time.Time        `json:"period_end"`
+	NextResetAt               *time.Time        `json:"next_reset_at"`
+	SampledAt                 *time.Time        `json:"sampled_at"`
+	SyncedAt                  *time.Time        `json:"synced_at"`
+	AccountingStatus          string            `json:"accounting_status"`
+	LastError                 string            `json:"last_error"`
+	OperationStatus           string            `json:"operation_status"`
+	CreatedAt                 time.Time         `json:"created_at"`
+	SubscriptionURLs          map[string]string `json:"subscription_urls"`
+	DeleteRequestedAt         *time.Time        `json:"delete_requested_at"`
+	DeletedAt                 *time.Time        `json:"deleted_at"`
+	GroupID                   int64             `json:"group_id"`
+	GroupName                 string            `json:"group_name"`
+	GroupQuotaBytes           int64             `json:"group_quota_bytes"`
+	SourceRevocationPending   bool              `json:"source_revocation_pending"`
+	OfflineMigrationAvailable bool              `json:"offline_migration_available"`
+	QuotaSyncNeeded           bool              `json:"quota_sync_needed"`
 }
 type VPNOperationPayload struct {
-	TargetServerID int64            `json:"target_server_id,omitempty"`
-	OperationID    string           `json:"operation_id"`
-	OwnerRef       string           `json:"owner_ref"`
-	Action         string           `json:"action"`
-	DataLimit      *int64           `json:"data_limit,omitempty"`
-	Enabled        *bool            `json:"enabled,omitempty"`
-	InitialUsage   *VPNInitialUsage `json:"initial_usage,omitempty"`
-	Migration      *VPNMigration    `json:"migration,omitempty"`
+	AllowOfflineMigration bool             `json:"allow_offline_migration,omitempty"`
+	TargetServerID        int64            `json:"target_server_id,omitempty"`
+	OperationID           string           `json:"operation_id"`
+	OwnerRef              string           `json:"owner_ref"`
+	Action                string           `json:"action"`
+	DataLimit             *int64           `json:"data_limit,omitempty"`
+	Enabled               *bool            `json:"enabled,omitempty"`
+	InitialUsage          *VPNInitialUsage `json:"initial_usage,omitempty"`
+	Migration             *VPNMigration    `json:"migration,omitempty"`
 }
 type VPNOperation struct {
 	ID             string

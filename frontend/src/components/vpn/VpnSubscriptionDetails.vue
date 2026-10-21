@@ -2,6 +2,7 @@
   <div class="space-y-5">
     <p role="status" :class="available ? 'text-emerald-600' : 'text-amber-600'">{{ t(available ? 'vpn.ready' : 'vpn.notAvailable') }}</p>
     <p v-if="vpnIsPending(subscription)" class="text-sm text-amber-600">{{ t('vpn.pendingNotice') }}</p>
+    <p v-if="subscription.source_revocation_pending" role="status" class="text-sm text-amber-600">{{ t('vpn.sourceRevocationPending') }}</p>
     <dl class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <div v-for="[label, value] in fields" :key="label" class="min-w-0">
         <dt class="text-sm text-gray-500 dark:text-gray-400">{{ t(`vpn.${label}`) }}</dt>

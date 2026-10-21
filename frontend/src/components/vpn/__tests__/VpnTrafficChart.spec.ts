@@ -23,6 +23,36 @@ afterEach(() => { wrapper?.unmount(); vi.useRealTimers() })
 const render = () => { wrapper = mount(VpnTrafficChart, { props: { servers: [{ id: 3, name: 'Node' } as VpnServer] } }); return wrapper }
 
 describe('VPN daily traffic chart', () => {
+  it.each([
+    { basis: 'node_transfer' as const, label: 'vpn.trafficBasisNodeTransfer' },
+    { basis: 'user_proxy' as const, label: 'vpn.trafficBasisUserProxy' },
+    { basis: undefined, label: 'vpn.trafficBasisUserProxy' }
+  ])('uses the returned accounting basis $basis without recalculating traffic', async ({ basis, label }) => {
+    dailyTraffic.mockResolvedValueOnce(response({ accounting_basis: basis }))
+    render()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="vpn-traffic-basis"]').text()).toBe(label)
+    expect(wrapper.text()).toContain('2.00 KiB')
+    expect(wrapper.findComponent('[data-chart]').props('data').datasets[0].data).toEqual([null, 0, 2048])
+  })
+  it('keeps the loaded basis while user filters are edited and changes it only after a successful response', async () => {
+    dailyTraffic.mockResolvedValueOnce(response({ accounting_basis: 'node_transfer' }))
+    render()
+    await flushPromises()
+    await wrapper.find('input').setValue(17)
+    expect(dailyTraffic).toHaveBeenCalledOnce()
+    expect(wrapper.find('[data-testid="vpn-traffic-basis"]').text()).toBe('vpn.trafficBasisNodeTransfer')
+    let finish!: (value: VpnDailyTraffic) => void
+    dailyTraffic.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    await wrapper.find('form').trigger('submit')
+    expect(wrapper.find('[data-testid="vpn-traffic-basis"]').exists()).toBe(false)
+    finish(response({ accounting_basis: 'user_proxy' }))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="vpn-traffic-basis"]').text()).toBe('vpn.trafficBasisUserProxy')
+    await wrapper.find('input').setValue('')
+    expect(wrapper.find('[data-testid="vpn-traffic-basis"]').text()).toBe('vpn.trafficBasisUserProxy')
+    expect(dailyTraffic).toHaveBeenCalledTimes(2)
+  })
   it('defaults to thirty Shanghai calendar days and keeps missing values distinct from zero', async () => {
     render()
     await flushPromises()
@@ -91,9 +121,10 @@ describe('VPN daily traffic chart', () => {
     render()
     await wrapper.findAll('select')[0].setValue(7)
     await flushPromises()
-    resolveOld(response({ days: [], total_bytes: 0 }))
+    resolveOld(response({ days: [], total_bytes: 0, accounting_basis: 'node_transfer' }))
     await flushPromises()
     expect(wrapper.find('[data-chart]').exists()).toBe(true)
     expect(wrapper.text()).toContain('2.00 KiB')
+    expect(wrapper.find('[data-testid="vpn-traffic-basis"]').text()).toBe('vpn.trafficBasisUserProxy')
   })
 })

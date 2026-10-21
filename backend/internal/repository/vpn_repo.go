@@ -25,12 +25,12 @@ func vpnError(err error) error {
 	return err
 }
 
-const vpnServerColumns = `v.id,v.name,v.base_url,v.admin_username,v.credentials_encrypted,v.enabled,v.healthy,v.health_error,v.personal_user_count,v.known_owner_refs,v.last_checked_at,v.created_at,v.updated_at,(SELECT count(*) FROM vpn_subscriptions s WHERE s.server_id=v.id AND s.deleted_at IS NULL),(SELECT count(*) FROM vpn_subscriptions s WHERE s.server_id=v.id AND s.deleted_at IS NULL AND s.operation_status IN ('pending','running')),v.traffic_quota_bytes,v.traffic_used_offset_bytes,v.traffic_offset_period_start,v.traffic_snapshot,v.allocation_snapshot,v.last_assigned_at`
+const vpnServerColumns = `v.id,v.name,v.base_url,v.admin_username,v.credentials_encrypted,v.enabled,v.healthy,v.health_error,v.personal_user_count,v.known_owner_refs,v.last_checked_at,v.created_at,v.updated_at,(SELECT count(*) FROM vpn_subscriptions s WHERE s.server_id=v.id AND s.deleted_at IS NULL),(SELECT count(*) FROM vpn_subscriptions s WHERE s.server_id=v.id AND s.deleted_at IS NULL AND s.operation_status IN ('pending','running')),v.traffic_quota_bytes,v.traffic_used_offset_bytes,v.traffic_offset_period_start,v.traffic_snapshot,v.allocation_snapshot,v.last_assigned_at,v.traffic_multiplier`
 
 func scanVPNServer(row vpnScanner) (*service.VPNServer, error) {
 	var v service.VPNServer
 	var refs, traffic, allocation []byte
-	err := row.Scan(&v.ID, &v.Name, &v.BaseURL, &v.AdminUsername, &v.CredentialsEncrypted, &v.Enabled, &v.Healthy, &v.HealthError, &v.PersonalUserCount, &refs, &v.LastCheckedAt, &v.CreatedAt, &v.UpdatedAt, &v.AssignedCount, &v.PendingCount, &v.TrafficQuotaBytes, &v.TrafficUsedOffsetBytes, &v.TrafficOffsetPeriodStart, &traffic, &allocation, &v.LastAssignedAt)
+	err := row.Scan(&v.ID, &v.Name, &v.BaseURL, &v.AdminUsername, &v.CredentialsEncrypted, &v.Enabled, &v.Healthy, &v.HealthError, &v.PersonalUserCount, &refs, &v.LastCheckedAt, &v.CreatedAt, &v.UpdatedAt, &v.AssignedCount, &v.PendingCount, &v.TrafficQuotaBytes, &v.TrafficUsedOffsetBytes, &v.TrafficOffsetPeriodStart, &traffic, &allocation, &v.LastAssignedAt, &v.TrafficMultiplier)
 	if err != nil {
 		return nil, vpnError(err)
 	}
@@ -84,12 +84,12 @@ func (r *vpnRepository) GetServer(ctx context.Context, id int64) (*service.VPNSe
 }
 func (r *vpnRepository) SaveServer(ctx context.Context, v *service.VPNServer) (*service.VPNServer, error) {
 	if v.ID == 0 {
-		err := r.db.QueryRowContext(ctx, `INSERT INTO vpn_servers(name,base_url,admin_username,credentials_encrypted,enabled,traffic_quota_bytes,traffic_used_offset_bytes,traffic_offset_period_start) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, v.Name, v.BaseURL, v.AdminUsername, v.CredentialsEncrypted, v.Enabled, v.TrafficQuotaBytes, v.TrafficUsedOffsetBytes, v.TrafficOffsetPeriodStart).Scan(&v.ID)
+		err := r.db.QueryRowContext(ctx, `INSERT INTO vpn_servers(name,base_url,admin_username,credentials_encrypted,enabled,traffic_quota_bytes,traffic_used_offset_bytes,traffic_offset_period_start,traffic_multiplier) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, v.Name, v.BaseURL, v.AdminUsername, v.CredentialsEncrypted, v.Enabled, v.TrafficQuotaBytes, v.TrafficUsedOffsetBytes, v.TrafficOffsetPeriodStart, v.VPNTrafficMultiplier()).Scan(&v.ID)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		result, err := r.db.ExecContext(ctx, `UPDATE vpn_servers SET name=$2,base_url=$3,admin_username=$4,credentials_encrypted=$5,enabled=$6,traffic_quota_bytes=$7,traffic_used_offset_bytes=$8,traffic_offset_period_start=$9,healthy=false,last_checked_at=NULL,updated_at=now() WHERE id=$1 AND (base_url=$3 OR (NOT EXISTS(SELECT 1 FROM vpn_subscriptions WHERE server_id=$1) AND NOT EXISTS(SELECT 1 FROM vpn_subscription_binding_history WHERE server_id=$1) AND NOT EXISTS(SELECT 1 FROM vpn_operations WHERE action='migrate' AND status IN ('pending','running','failed') AND (payload->'migration'->>'target_server_id')::bigint=$1)))`, v.ID, v.Name, v.BaseURL, v.AdminUsername, v.CredentialsEncrypted, v.Enabled, v.TrafficQuotaBytes, v.TrafficUsedOffsetBytes, v.TrafficOffsetPeriodStart)
+		result, err := r.db.ExecContext(ctx, `UPDATE vpn_servers SET name=$2,base_url=$3,admin_username=$4,credentials_encrypted=$5,enabled=$6,traffic_quota_bytes=$7,traffic_used_offset_bytes=$8,traffic_offset_period_start=$9,traffic_multiplier=$10,healthy=false,last_checked_at=NULL,updated_at=now() WHERE id=$1 AND (base_url=$3 OR (NOT EXISTS(SELECT 1 FROM vpn_subscriptions WHERE server_id=$1) AND NOT EXISTS(SELECT 1 FROM vpn_subscription_binding_history WHERE server_id=$1) AND NOT EXISTS(SELECT 1 FROM vpn_operations WHERE action='migrate' AND status IN ('pending','running','failed') AND (payload->'migration'->>'target_server_id')::bigint=$1)))`, v.ID, v.Name, v.BaseURL, v.AdminUsername, v.CredentialsEncrypted, v.Enabled, v.TrafficQuotaBytes, v.TrafficUsedOffsetBytes, v.TrafficOffsetPeriodStart, v.VPNTrafficMultiplier())
 		if err != nil {
 			return nil, err
 		}
@@ -119,13 +119,13 @@ func (r *vpnRepository) UpdateServerHealth(ctx context.Context, id int64, m *ser
 	return err
 }
 
-const vpnSubColumns = `s.id,s.user_id,u.email,s.server_id,v.name,s.owner_ref,s.remote_username,s.enabled,s.quota_bytes,s.status,s.apply_status,s.access_state,s.snapshot,s.url_encrypted,s.last_error,s.synced_at,s.operation_status,s.created_at,s.delete_requested_at,s.deleted_at,s.group_id,g.name,g.quota_bytes,s.quota_sync_needed`
+const vpnSubColumns = `s.id,s.user_id,u.email,s.server_id,v.name,s.owner_ref,s.remote_username,s.enabled,s.quota_bytes,s.status,s.apply_status,s.access_state,s.snapshot,s.url_encrypted,s.last_error,s.synced_at,s.operation_status,s.created_at,s.delete_requested_at,s.deleted_at,s.group_id,g.name,g.quota_bytes,s.quota_sync_needed,EXISTS(SELECT 1 FROM vpn_credential_revocations cr WHERE cr.subscription_id=s.id AND cr.status<>'succeeded'),(NOT v.enabled AND NOT v.healthy AND s.deleted_at IS NULL AND s.delete_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM vpn_operations op WHERE op.subscription_id=s.id AND op.status IN ('pending','running','failed') AND (op.action<>'migrate' OR op.payload->'migration'->>'stage'<>'revoke_source' OR COALESCE((op.payload->'migration'->>'target_dispatched')::boolean,false))))`
 const vpnSubJoin = ` FROM vpn_subscriptions s JOIN users u ON u.id=s.user_id JOIN vpn_servers v ON v.id=s.server_id JOIN vpn_user_groups g ON g.id=s.group_id `
 
 func scanVPNSub(row vpnScanner) (*service.VPNSubscription, error) {
 	var s service.VPNSubscription
 	var snapshot []byte
-	err := row.Scan(&s.ID, &s.UserID, &s.UserEmail, &s.ServerID, &s.ServerName, &s.OwnerRef, &s.RemoteUsername, &s.Enabled, &s.QuotaBytes, &s.Status, &s.ApplyStatus, &s.AccessState, &snapshot, &s.URLEncrypted, &s.LastError, &s.SyncedAt, &s.OperationStatus, &s.CreatedAt, &s.DeleteRequestedAt, &s.DeletedAt, &s.GroupID, &s.GroupName, &s.GroupQuotaBytes, &s.QuotaSyncNeeded)
+	err := row.Scan(&s.ID, &s.UserID, &s.UserEmail, &s.ServerID, &s.ServerName, &s.OwnerRef, &s.RemoteUsername, &s.Enabled, &s.QuotaBytes, &s.Status, &s.ApplyStatus, &s.AccessState, &snapshot, &s.URLEncrypted, &s.LastError, &s.SyncedAt, &s.OperationStatus, &s.CreatedAt, &s.DeleteRequestedAt, &s.DeletedAt, &s.GroupID, &s.GroupName, &s.GroupQuotaBytes, &s.QuotaSyncNeeded, &s.SourceRevocationPending, &s.OfflineMigrationAvailable)
 	if err != nil {
 		return nil, vpnError(err)
 	}
@@ -237,6 +237,12 @@ func (r *vpnRepository) Reserve(ctx context.Context, userID int64, admin bool, a
 	return r.GetSubscription(ctx, id)
 }
 func (r *vpnRepository) Queue(ctx context.Context, id, actor int64, p service.VPNOperationPayload) error {
+	if p.AllowOfflineMigration {
+		if p.Action != "revoke" || p.TargetServerID <= 0 || actor <= 0 {
+			return service.ErrVPNInvalid
+		}
+		return r.queueOfflineMigration(ctx, id, actor, p.TargetServerID)
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -428,7 +434,7 @@ func (r *vpnRepository) ids(ctx context.Context, q string) ([]int64, error) {
 	return ids, rows.Err()
 }
 func (r *vpnRepository) SyncCandidates(ctx context.Context) ([]int64, error) {
-	return r.ids(ctx, `SELECT id FROM vpn_subscriptions WHERE deleted_at IS NULL AND (sync_attempted_at IS NULL OR sync_attempted_at<now()-interval '30 seconds') ORDER BY sync_attempted_at NULLS FIRST,id LIMIT 50`)
+	return r.ids(ctx, `SELECT id FROM vpn_subscriptions WHERE deleted_at IS NULL AND operation_status NOT IN ('pending','running') AND EXISTS(SELECT 1 FROM vpn_servers v WHERE v.id=server_id AND v.healthy) AND (sync_attempted_at IS NULL OR sync_attempted_at<now()-interval '30 seconds') ORDER BY sync_attempted_at NULLS FIRST,id LIMIT 50`)
 }
 func (r *vpnRepository) InactiveUserSubscriptions(ctx context.Context) ([]int64, error) {
 	return r.ids(ctx, `SELECT s.id FROM vpn_subscriptions s JOIN users u ON u.id=s.user_id WHERE s.enabled AND s.deleted_at IS NULL AND s.delete_requested_at IS NULL AND (u.status<>'active' OR u.deleted_at IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM vpn_operations o WHERE o.subscription_id=s.id AND o.status IN ('pending','running')) LIMIT 50`)
@@ -460,4 +466,9 @@ func (r *vpnRepository) UserOwnerRefs(ctx context.Context, userID int64) (map[in
 		result[server] = append(result[server], ref)
 	}
 	return result, rows.Err()
+}
+
+func (r *vpnRepository) MarkBindingSyncError(ctx context.Context, id, serverID int64, owner, operation, message string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE vpn_subscriptions SET last_error=$6,sync_attempted_at=now() WHERE id=$1 AND server_id=$2 AND owner_ref=$3 AND COALESCE(snapshot->>'last_operation_id','')=$4 AND $4=COALESCE((SELECT id FROM vpn_operations WHERE subscription_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1),'') AND operation_status=$5`, id, serverID, owner, operation, "succeeded", message)
+	return err
 }

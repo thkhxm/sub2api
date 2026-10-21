@@ -152,13 +152,14 @@ func (h *VPNHandler) AdminRevoke(c *gin.Context) {
 		return
 	}
 	var in struct {
-		TargetServerID int64 `json:"target_server_id"`
+		TargetServerID        int64 `json:"target_server_id"`
+		AllowOfflineMigration bool  `json:"allow_offline_migration"`
 	}
 	if c.ShouldBindJSON(&in) != nil || in.TargetServerID <= 0 {
 		vpnReply(c, nil, service.ErrVPNInvalid)
 		return
 	}
-	v, e := h.svc.Rotate(c.Request.Context(), id, vpnActor(c), in.TargetServerID)
+	v, e := h.svc.RotateWithOptions(c.Request.Context(), id, vpnActor(c), in.TargetServerID, in.AllowOfflineMigration)
 	vpnAccepted(c, v, e)
 }
 func (h *VPNHandler) AdminRefresh(c *gin.Context) {

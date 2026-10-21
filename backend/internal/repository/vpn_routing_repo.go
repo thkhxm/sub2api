@@ -193,7 +193,7 @@ func (r *vpnRepository) MarkOperationDispatched(ctx context.Context, o *service.
 }
 
 func sameVPNMigrationBinding(a, b *service.VPNMigration) bool {
-	return a != nil && b != nil && a.SourceServerID == b.SourceServerID && a.SourceOwnerRef == b.SourceOwnerRef && a.SourceUsername == b.SourceUsername && a.TargetServerID == b.TargetServerID && a.TargetOwnerRef == b.TargetOwnerRef && a.TargetUsername == b.TargetUsername && a.QuotaBytes == b.QuotaBytes && a.Enabled == b.Enabled && a.ManualTarget == b.ManualTarget
+	return a != nil && b != nil && a.SourceServerID == b.SourceServerID && a.SourceOwnerRef == b.SourceOwnerRef && a.SourceUsername == b.SourceUsername && a.TargetServerID == b.TargetServerID && a.TargetOwnerRef == b.TargetOwnerRef && a.TargetUsername == b.TargetUsername && a.QuotaBytes == b.QuotaBytes && a.Enabled == b.Enabled && a.ManualTarget == b.ManualTarget && a.AllowOfflineMigration == b.AllowOfflineMigration
 }
 
 func (r *vpnRepository) CheckpointMigration(ctx context.Context, o *service.VPNOperation, m *service.VPNMigration) error {
@@ -209,6 +209,24 @@ func (r *vpnRepository) CheckpointMigration(ctx context.Context, o *service.VPNO
 	old := p.Migration
 	if !sameVPNMigrationBinding(old, m) || old.Stage == "completed" || m.Stage == "completed" || (old.TargetDispatched && !m.TargetDispatched) || (old.TargetRetired && !m.TargetRetired) {
 		return service.ErrVPNBusy
+	}
+	if old.SourceRevocationPending && !m.SourceRevocationPending {
+		return service.ErrVPNBusy
+	}
+	if !old.SourceRevocationPending && m.SourceRevocationPending {
+		if !old.AllowOfflineMigration || old.Stage != "revoke_source" || m.Stage != "create_target" || m.InitialUsage == nil {
+			return service.ErrVPNInvalid
+		}
+		var disabled bool
+		if err := tx.QueryRowContext(ctx, `SELECT NOT enabled FROM vpn_servers WHERE id=$1 FOR SHARE`, m.SourceServerID).Scan(&disabled); err != nil {
+			return err
+		}
+		if !disabled {
+			return service.ErrVPNInvalid
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO vpn_credential_revocations(id,subscription_id,server_id,owner_ref,remote_username) VALUES($1,$2,$3,$4,$5) ON CONFLICT(server_id,owner_ref) DO NOTHING`, service.VPNSourceRevocationID(o.ID), s.ID, m.SourceServerID, m.SourceOwnerRef, m.SourceUsername); err != nil {
+			return err
+		}
 	}
 	if m.TargetRetired && (!old.TargetDispatched || m.Stage != "create_target") {
 		return service.ErrVPNInvalid

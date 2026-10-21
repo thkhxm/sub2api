@@ -40,7 +40,11 @@ func hydrateVPNServer(v *VPNServer, now time.Time) {
 	}
 	v.TrafficPeriodStart, v.TrafficPeriodEnd = x.PeriodStart, x.PeriodEnd
 	v.TrafficSampledAt, v.TrafficAvailableFrom = x.SampledAt, x.AvailableFrom
-	used := *x.UsedBytes
+	if *x.UsedBytes > VPNMaxQuota/v.VPNTrafficMultiplier() {
+		v.TrafficAccountingStatus = "invalid"
+		return
+	}
+	used := *x.UsedBytes * v.VPNTrafficMultiplier()
 	v.TrafficUsedBytes = &used
 	if v.TrafficOffsetPeriodStart != nil && v.TrafficOffsetPeriodStart.Equal(*x.PeriodStart) {
 		if v.TrafficUsedOffsetBytes > VPNMaxQuota-used {
@@ -103,6 +107,10 @@ func (s *VPNService) DailyTraffic(ctx context.Context, f VPNTrafficFilter) (*VPN
 		return nil, err
 	}
 	response := &VPNTrafficResponse{Timezone: "Asia/Shanghai", StartDate: f.StartDate, EndDate: f.EndDate, Days: make([]VPNTrafficDay, len(dates))}
+	response.AccountingBasis = "node_transfer"
+	if f.UserID > 0 {
+		response.AccountingBasis = "user_proxy"
+	}
 	for i, date := range dates {
 		response.Days[i].Date = date
 	}
@@ -142,8 +150,9 @@ func (s *VPNService) DailyTraffic(ctx context.Context, f VPNTrafficFilter) (*VPN
 		return response, nil
 	}
 	type nodeResult struct {
-		traffic *VPNRemoteTraffic
-		err     error
+		traffic    *VPNRemoteTraffic
+		multiplier int64
+		err        error
 	}
 	results := make(chan nodeResult, len(selected))
 	limit := make(chan struct{}, 4)
@@ -165,7 +174,11 @@ func (s *VPNService) DailyTraffic(ctx context.Context, f VPNTrafficFilter) (*VPN
 			if e == nil && !validVPNRemoteTraffic(traffic, f, dates) {
 				e = fmt.Errorf("VPN节点每日流量响应无效")
 			}
-			results <- nodeResult{traffic, e}
+			multiplier := int64(1)
+			if f.UserID == 0 {
+				multiplier = server.VPNTrafficMultiplier()
+			}
+			results <- nodeResult{traffic: traffic, multiplier: multiplier, err: e}
 		}(server)
 	}
 	for range selected {
@@ -194,11 +207,11 @@ func (s *VPNService) DailyTraffic(ctx context.Context, f VPNTrafficFilter) (*VPN
 				value := int64(0)
 				response.Days[i].UsedBytes = &value
 			}
-			if *day.UsedBytes > VPNMaxQuota-response.TotalBytes {
+			if *day.UsedBytes > (VPNMaxQuota-response.TotalBytes)/r.multiplier {
 				return nil, ErrVPNInvalid
 			}
-			*response.Days[i].UsedBytes += *day.UsedBytes
-			response.TotalBytes += *day.UsedBytes
+			*response.Days[i].UsedBytes += *day.UsedBytes * r.multiplier
+			response.TotalBytes += *day.UsedBytes * r.multiplier
 		}
 	}
 	if ctx.Err() != nil {
@@ -208,4 +221,34 @@ func (s *VPNService) DailyTraffic(ctx context.Context, f VPNTrafficFilter) (*VPN
 		return nil, ErrVPNNoServer
 	}
 	return response, nil
+}
+
+// 未配置的内存对象沿用原口径；持久节点由迁移显式设置为双向收发。
+func (v *VPNServer) VPNTrafficMultiplier() int64 {
+	if v.TrafficMultiplier == 2 {
+		return 2
+	}
+	return 1
+}
+
+// 耗尽的旧快照也禁止继续分配；换账期后不把上一期用量带入。
+func (v *VPNServer) TrafficExhausted(now time.Time) bool {
+	x := v.TrafficSnapshot
+	if v.TrafficQuotaBytes <= 0 || x == nil || !validVPNNodeTraffic(x) {
+		return false
+	}
+	start, _ := vpnPeriodBounds(now)
+	if !x.PeriodStart.Equal(start) {
+		return false
+	}
+	multiplier := v.VPNTrafficMultiplier()
+	if *x.UsedBytes > VPNMaxQuota/multiplier {
+		return true
+	}
+	used := *x.UsedBytes * multiplier
+	offset := int64(0)
+	if v.TrafficOffsetPeriodStart != nil && v.TrafficOffsetPeriodStart.Equal(start) {
+		offset = v.TrafficUsedOffsetBytes
+	}
+	return used >= v.TrafficQuotaBytes || offset >= v.TrafficQuotaBytes-used
 }

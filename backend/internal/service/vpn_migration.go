@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -24,19 +25,21 @@ type VPNInitialUsage struct {
 
 // 迁移阶段与操作一同持久化；任何远端请求重放都使用原来的操作编号。
 type VPNMigration struct {
-	ManualTarget     bool             `json:"manual_target,omitempty"`
-	SourceServerID   int64            `json:"source_server_id"`
-	SourceOwnerRef   string           `json:"source_owner_ref"`
-	SourceUsername   string           `json:"source_username"`
-	TargetServerID   int64            `json:"target_server_id"`
-	TargetOwnerRef   string           `json:"target_owner_ref"`
-	TargetUsername   string           `json:"target_username"`
-	Stage            string           `json:"stage"`
-	QuotaBytes       int64            `json:"quota_bytes"`
-	Enabled          bool             `json:"enabled"`
-	InitialUsage     *VPNInitialUsage `json:"initial_usage,omitempty"`
-	TargetDispatched bool             `json:"target_dispatched"`
-	TargetRetired    bool             `json:"target_retired"`
+	AllowOfflineMigration   bool             `json:"allow_offline_migration,omitempty"`
+	SourceRevocationPending bool             `json:"source_revocation_pending,omitempty"`
+	ManualTarget            bool             `json:"manual_target,omitempty"`
+	SourceServerID          int64            `json:"source_server_id"`
+	SourceOwnerRef          string           `json:"source_owner_ref"`
+	SourceUsername          string           `json:"source_username"`
+	TargetServerID          int64            `json:"target_server_id"`
+	TargetOwnerRef          string           `json:"target_owner_ref"`
+	TargetUsername          string           `json:"target_username"`
+	Stage                   string           `json:"stage"`
+	QuotaBytes              int64            `json:"quota_bytes"`
+	Enabled                 bool             `json:"enabled"`
+	InitialUsage            *VPNInitialUsage `json:"initial_usage,omitempty"`
+	TargetDispatched        bool             `json:"target_dispatched"`
+	TargetRetired           bool             `json:"target_retired"`
 }
 
 func migrationOperationID(parent, step string) string {
@@ -113,7 +116,7 @@ func maxVPNUsage(a, b int64) int64 {
 }
 
 func migrationUsage(x *VPNSnapshot, previous *VPNInitialUsage) (*VPNInitialUsage, error) {
-	if x.PeriodStart == nil || x.PeriodEnd == nil || !x.PeriodStart.Before(*x.PeriodEnd) {
+	if x.PeriodStart == nil || x.PeriodEnd == nil || !x.PeriodStart.Before(*x.PeriodEnd) || x.UploadBytes < 0 || x.DownloadBytes < 0 || x.UsedTraffic < 0 || x.UploadBytes > VPNMaxQuota || x.DownloadBytes > VPNMaxQuota-x.UploadBytes || x.UsedTraffic > VPNMaxQuota {
 		return nil, fmt.Errorf("源节点缺少有效账期，不能迁移额度")
 	}
 	usage := &VPNInitialUsage{UploadBytes: x.UploadBytes, DownloadBytes: x.DownloadBytes, UsedTraffic: x.UsedTraffic,
@@ -203,12 +206,27 @@ func (s *VPNService) processMigration(ctx context.Context, o *VPNOperation, m *V
 		}
 		x, err := s.migrationRemote(ctx, o, source, m.SourceUsername, VPNOperationPayload{
 			OperationID: migrationOperationID(o.ID, "retire-source"), OwnerRef: m.SourceOwnerRef, Action: "delete"})
-		if err != nil {
-			return fail(err)
+		if err != nil && (!m.AllowOfflineMigration || source.Enabled || !errors.Is(err, ErrVPNConnection) || ctx.Err() != nil) {
+			return "pending", "源节点凭据撤销未完成：" + err.Error()
 		}
+		sourceUnavailable := err != nil
 		sub, err := s.repo.GetSubscription(ctx, o.SubscriptionID)
 		if err != nil {
 			return fail(err)
+		}
+		if sourceUnavailable {
+			// 管理员已确认离线迁移；快照身份与账期缺失时仍不可凭空重置额度。
+			if sub.Snapshot.OwnerRef != m.SourceOwnerRef || sub.Snapshot.Username != m.SourceUsername || sub.Snapshot.SampledAt == nil || sub.Snapshot.PeriodStart == nil || sub.Snapshot.PeriodEnd == nil {
+				return "pending", "缺少可校验的源节点用量快照，不能离线迁移"
+			}
+			start, end := vpnPeriodBounds(*sub.Snapshot.PeriodStart)
+			if !sub.Snapshot.PeriodStart.Equal(start) || !sub.Snapshot.PeriodEnd.Equal(end) || sub.Snapshot.PeriodStart.After(time.Now()) {
+				return "pending", "源节点用量账期无效，不能离线迁移"
+			}
+			copy := sub.Snapshot
+			copy.AccountingStatus = "gap_detected"
+			x = &copy
+			m.SourceRevocationPending = true
 		}
 		previous, _ := migrationUsage(&sub.Snapshot, nil)
 		m.InitialUsage, err = migrationUsage(x, previous)
@@ -218,6 +236,9 @@ func (s *VPNService) processMigration(ctx context.Context, o *VPNOperation, m *V
 		m.Stage = "create_target"
 		if err := s.saveMigration(ctx, o, m); err != nil {
 			return fail(err)
+		}
+		if m.SourceRevocationPending {
+			return "pending", "旧节点离线，已登记待撤销凭据，正在续接本期额度"
 		}
 		return "pending", "旧节点凭据已失效，正在续接本期额度"
 	}
