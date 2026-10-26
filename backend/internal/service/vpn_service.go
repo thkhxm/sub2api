@@ -261,6 +261,20 @@ func (s *VPNService) Create(ctx context.Context, userID int64, admin bool, actor
 	}
 	return v, s.hydrate(v)
 }
+func (s *VPNService) CreateForAdmin(ctx context.Context, userID, actor int64, options VPNCreateOptions) (*VPNSubscription, error) {
+	if options.AllowOvercommit {
+		if options.TargetServerID <= 0 || options.ExpectedQuotaBytes <= 0 || options.ExpectedQuotaBytes > VPNMaxQuota {
+			return nil, ErrVPNInvalid
+		}
+	} else if options.TargetServerID != 0 || options.ExpectedQuotaBytes != 0 {
+		return nil, ErrVPNInvalid
+	}
+	v, err := s.repo.ReserveAdmin(ctx, userID, actor, uuid.NewString(), options)
+	if err != nil {
+		return nil, err
+	}
+	return v, s.hydrate(v)
+}
 func (s *VPNService) Update(ctx context.Context, id, actor int64, in VPNUpdate) (*VPNSubscription, error) {
 	if in.QuotaBytes == nil && in.Enabled == nil {
 		return nil, ErrVPNInvalid
@@ -440,6 +454,7 @@ func (s *VPNService) process(ctx context.Context, o *VPNOperation) {
 	// 管理员选择的目标属于平台调度字段，不传给节点的个人操作协议。
 	payload.TargetServerID = 0
 	payload.AllowOfflineMigration = false
+	payload.AllowOvercommit = false
 	remotePayload, _ := json.Marshal(payload)
 	result, err := s.remote.Submit(ctx, server, cred, sub.RemoteUsername, remotePayload)
 	if err != nil {

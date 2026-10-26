@@ -8,16 +8,17 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
-const VPNDefaultQuota int64 = 80 * 1024 * 1024 * 1024
+const VPNDefaultQuota int64 = 40 * 1024 * 1024 * 1024
 const VPNMaxQuota int64 = 9007199254740991
 
 var (
-	ErrVPNNotFound       = infraerrors.NotFound("VPN_NOT_FOUND", "VPN订阅或节点不存在")
-	ErrVPNNoServer       = infraerrors.ServiceUnavailable("VPN_NO_SERVER", "暂无可用VPN节点")
-	ErrVPNBalance        = infraerrors.Forbidden("VPN_BALANCE_REQUIRED", "可用余额必须大于0才能自助开通")
-	ErrVPNBusy           = infraerrors.Conflict("VPN_BUSY", "订阅仍有未完成操作，请等待或重试原操作")
-	ErrVPNInvalid        = infraerrors.BadRequest("VPN_INVALID", "VPN配置或请求参数无效")
-	ErrVPNServerDisabled = infraerrors.Conflict("VPN_SERVER_DISABLED", "订阅所在节点已禁用，请管理员轮换凭据迁移到可用节点")
+	ErrVPNNotFound           = infraerrors.NotFound("VPN_NOT_FOUND", "VPN订阅或节点不存在")
+	ErrVPNNoServer           = infraerrors.ServiceUnavailable("VPN_NO_SERVER", "没有启用且健康、检测有效的 VPN 节点，请检查节点状态")
+	ErrVPNOvercommitRequired = infraerrors.Conflict("VPN_OVERCOMMIT_REQUIRED", "节点可分配额度不足，管理员需确认超配后才能开通")
+	ErrVPNBalance            = infraerrors.Forbidden("VPN_BALANCE_REQUIRED", "可用余额必须大于0才能自助开通")
+	ErrVPNBusy               = infraerrors.Conflict("VPN_BUSY", "订阅仍有未完成操作，请等待或重试原操作")
+	ErrVPNInvalid            = infraerrors.BadRequest("VPN_INVALID", "VPN配置或请求参数无效")
+	ErrVPNServerDisabled     = infraerrors.Conflict("VPN_SERVER_DISABLED", "订阅所在节点已禁用，请管理员轮换凭据迁移到可用节点")
 )
 
 type VPNServer struct {
@@ -199,6 +200,7 @@ type VPNSubscription struct {
 	QuotaSyncNeeded           bool              `json:"quota_sync_needed"`
 }
 type VPNOperationPayload struct {
+	AllowOvercommit       bool             `json:"allow_overcommit,omitempty"`
 	AllowOfflineMigration bool             `json:"allow_offline_migration,omitempty"`
 	TargetServerID        int64            `json:"target_server_id,omitempty"`
 	OperationID           string           `json:"operation_id"`
@@ -208,6 +210,11 @@ type VPNOperationPayload struct {
 	Enabled               *bool            `json:"enabled,omitempty"`
 	InitialUsage          *VPNInitialUsage `json:"initial_usage,omitempty"`
 	Migration             *VPNMigration    `json:"migration,omitempty"`
+}
+type VPNCreateOptions struct {
+	AllowOvercommit    bool  `json:"allow_overcommit"`
+	TargetServerID     int64 `json:"target_server_id"`
+	ExpectedQuotaBytes int64 `json:"expected_quota_bytes"`
 }
 type VPNOperation struct {
 	ID             string
@@ -271,6 +278,7 @@ type VPNRepository interface {
 	GetUserSubscription(context.Context, int64) (*VPNSubscription, error)
 	Eligibility(context.Context, int64) (bool, string, error)
 	Reserve(context.Context, int64, bool, int64, string) (*VPNSubscription, error)
+	ReserveAdmin(context.Context, int64, int64, string, VPNCreateOptions) (*VPNSubscription, error)
 	Queue(context.Context, int64, int64, VPNOperationPayload) error
 	Retry(context.Context, int64) error
 	Claim(context.Context) (*VPNOperation, error)

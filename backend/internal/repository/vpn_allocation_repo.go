@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"math/big"
+	"strconv"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -11,6 +12,7 @@ import (
 )
 
 type vpnNodeRequest struct {
+	AllowOvercommit, ReportOvercommit                bool
 	SourceID, ExcludedID, RequiredQuota, RequestedID int64
 	OwnerRef, IgnoreOperationID                      string
 }
@@ -161,10 +163,16 @@ ORDER BY v.id FOR UPDATE OF v`, req.SourceID, req.ExcludedID, req.RequestedID)
 		return 0, err
 	}
 	applyVPNAllocations(servers, desired)
-	var selected *service.VPNServer
+	var selected, overflow *service.VPNServer
+	unknown, exhausted := false, false
 	for i := range servers {
 		server := &servers[i]
-		if server.AllocationQuotaBytes == nil || *server.AllocationQuotaBytes > server.TrafficQuotaBytes/server.VPNTrafficMultiplier() || server.TrafficExhausted(time.Now()) {
+		if server.AllocationQuotaBytes == nil {
+			unknown = true
+			continue
+		}
+		if server.TrafficExhausted(time.Now()) {
+			exhausted = true
 			continue
 		}
 		alreadyReserved := int64(0)
@@ -172,15 +180,44 @@ ORDER BY v.id FOR UPDATE OF v`, req.SourceID, req.ExcludedID, req.RequestedID)
 			alreadyReserved = max(server.AllocationSnapshot.ManagedQuotaBytes[req.OwnerRef], desired[server.ID][req.OwnerRef])
 		}
 		additional := max(req.RequiredQuota-alreadyReserved, 0)
-		if additional > server.TrafficQuotaBytes/server.VPNTrafficMultiplier()-*server.AllocationQuotaBytes {
+		if additional > service.VPNMaxQuota-*server.AllocationQuotaBytes {
+			unknown = true
 			continue
+		}
+		if additional > server.TrafficQuotaBytes/server.VPNTrafficMultiplier()-*server.AllocationQuotaBytes {
+			if overflow == nil || lessVPNAllocation(server, overflow) {
+				overflow = server
+			}
+			if !req.AllowOvercommit {
+				continue
+			}
 		}
 		if selected == nil || lessVPNAllocation(server, selected) {
 			selected = server
 		}
 	}
 	if selected == nil {
-		return 0, service.ErrVPNNoServer
+		if overflow != nil && req.ReportOvercommit {
+			return 0, service.ErrVPNOvercommitRequired.WithMetadata(map[string]string{
+				"server_id": strconv.FormatInt(overflow.ID, 10), "server_name": overflow.Name,
+				"required_quota_bytes":       strconv.FormatInt(req.RequiredQuota, 10),
+				"node_quota_bytes":           strconv.FormatInt(overflow.TrafficQuotaBytes, 10),
+				"allocated_quota_bytes":      strconv.FormatInt(*overflow.AllocationQuotaBytes, 10),
+				"traffic_multiplier":         strconv.FormatInt(overflow.VPNTrafficMultiplier(), 10),
+				"projected_allocation_ratio": strconv.FormatFloat(float64(*overflow.AllocationQuotaBytes+req.RequiredQuota)*float64(overflow.VPNTrafficMultiplier())/float64(overflow.TrafficQuotaBytes), 'g', -1, 64),
+			})
+		}
+		err := service.ErrVPNNoServer.WithMetadata(nil)
+		switch {
+		case overflow != nil:
+			err.Message = "节点可分配月额度不足，请联系管理员调整容量；当前已用流量不等于可分配额度"
+			err.Metadata = map[string]string{"cause": "capacity_insufficient"}
+		case exhausted:
+			err.Message = "可用节点的本期流量已耗尽，请更换节点或等待流量恢复"
+		case unknown:
+			err.Message = "节点额度统计暂不可用，请等待节点同步完成后重试"
+		}
+		return 0, err
 	}
 	return selected.ID, nil
 }

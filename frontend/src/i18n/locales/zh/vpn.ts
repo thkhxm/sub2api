@@ -1,7 +1,7 @@
 export default {
   vpn: {
     title: 'VPN 订阅', adminTitle: 'VPN 管理', description: '查看订阅、每月流量和连接状态',
-    policy: '每人一份订阅，当前新订阅默认每月 {quota}；已有订阅以实际额度为准。上海时间每月 22 日 00:00 重置，不结转，月中开通也获得完整额度。',
+    policy: '每人一份订阅，当前新订阅默认每月 {quota}；已有订阅以实际额度为准。上海时间每月 22 日 00:00 重置，不结转，月中开通也获得完整额度。 用户额度按上传与下载合计计量，节点收发流量另按节点倍率折算。',
     createPolicy: '余额大于 0 时可申请开通，不扣费。开通后余额变为 0 不影响订阅。节点自动分配，无法自行删除重建或转绑。',
     create: '开通订阅', createForUser: '为用户开通', noSubscription: '尚未开通 VPN 订阅', unavailable: '当前无法开通，请联系管理员。',
     refresh: '刷新状态', loading: '正在加载…', loadFailed: '加载失败，请重试', actionFailed: '操作失败，请重试', accepted: '申请已受理，请等待状态更新',
@@ -26,7 +26,12 @@ export default {
     enabled: '启用', disabled: '禁用', healthy: '健康', unhealthy: '不可用', personalCount: '个人账号数', assignedCount: '绑定数', pendingCount: '预占数', lastChecked: '最近检测',
     save: '保存', cancel: '取消', edit: '编辑额度与状态', details: '详情', noServers: '尚未添加节点', noResults: '没有匹配的订阅',
     search: '搜索用户 / 邮箱', searchUsers: '查找用户', selectUser: '选择用户', allServers: '全部节点', allStatuses: '全部状态', filter: '查询',
-    createHint: '自动选择健康且启用、可分配额度充足且分配占比最低的节点；管理员代开不受余额限制。已有订阅将返回原订阅。',
+    createHint: '优先选择健康且启用、额度充足且分配占比最低的节点。管理员代开不受余额限制；容量不足时需明确确认超配，用户自助开通仍受容量限制。已有订阅将返回原订阅。',
+    overcommitTitle: '节点可分配额度不足，需要确认超配',
+    overcommitDetails: '将在“{node}”开通用户月额度 {quota}。节点已分配收发额度 {allocated} / {capacity}，开通后分配占比约 {ratio}%。',
+    overcommitRisk: '超配不会增加服务商提供的流量。若用户用满额度，节点可能提前耗尽流量，影响该节点所有用户。',
+    overcommitConfirm: '我已了解风险，确认在此节点超配开通本用户订阅。',
+    overcommitCreate: '确认超配并开通',
     quotaGiB: '每月额度（GiB）', invalidQuota: '请输入大于 0 的有效额度，字节值不能超过安全整数上限。',
     invalidHttps: '节点地址必须使用 HTTPS，且不能包含用户名或密码。',
     retry: '重试原操作', revoke: '选择节点并轮换', revokeConfirm: '将在当前节点“{name}”原地轮换，不新增占额，并保留本期已用流量。原订阅地址和连接凭据失效，旧连接断开；此用户所有设备都需要重新导入订阅。是否继续？',
@@ -68,7 +73,7 @@ export default {
     selectGroup: '选择 VPN 用户组', switchGroup: '切换用户组', confirmSwitchGroup: '确认切换用户组',
     switchGroupHint: '切组后按目标组月额异步生效；当前已用流量保留。',
     switchGroupConfirm: '将此用户移入“{name}”，并将现有订阅月额异步调整为 {quota}。已用流量保留，超出新额度时可能暂停连接。是否继续？',
-    reasons: { balance_required: '账户余额需要大于 0 才能开通；申请不会扣费。', user_inactive: '账户已停用，无法开通。', no_available_server: '暂时没有健康且启用的可用节点，请稍后刷新或联系管理员。', already_exists: '您已经有一份订阅，请刷新查看。' },
+    reasons: { balance_required: '账户余额需要大于 0 才能开通；申请不会扣费。', user_inactive: '账户已停用，无法开通。', capacity_insufficient: '节点可分配月额度不足，暂时无法自助开通，请联系管理员。', no_available_server: '节点暂不可分配：可能已禁用、检测过期、统计不可用或本期流量耗尽，请联系管理员。', already_exists: '您已经有一份订阅，请刷新查看。' },
     states: { active: '启用', disabled: '禁用', limited: '超额', expired: '过期', provisioning: '创建中', deleting: '删除中', deleted: '已删除', pending: '处理中', running: '正在执行', applied: '已生效', failed: '失败', succeeded: '成功', allowed: '允许', blocked: '阻止', unknown: '未知', ok: '正常', stale: '采样滞后', gap_detected: '计量有缺口', partial_history: '历史统计不完整' }
   }
 }

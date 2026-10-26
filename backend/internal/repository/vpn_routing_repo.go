@@ -113,6 +113,24 @@ func (r *vpnRepository) PrepareOperation(ctx context.Context, o *service.VPNOper
 	if p.Action == "create" && !current.Dispatched && p.DataLimit != nil && *p.DataLimit > requiredQuota {
 		requiredQuota = *p.DataLimit
 	}
+	// 超配确认只适用于已确认的节点与额度；失败重试不能扩大授权或暗中改派。
+	if p.Action == "create" && p.AllowOvercommit {
+		if p.TargetServerID != s.ServerID || p.DataLimit == nil || requiredQuota > *p.DataLimit {
+			return nil, service.ErrVPNInvalid
+		}
+		if !enabled {
+			return nil, service.ErrVPNNoServer
+		}
+		if !current.Dispatched {
+			if _, e := selectVPNServerByQuota(ctx, tx, vpnNodeRequest{RequestedID: s.ServerID, RequiredQuota: requiredQuota, OwnerRef: s.OwnerRef, IgnoreOperationID: o.ID, AllowOvercommit: true}); e != nil {
+				return nil, e
+			}
+		}
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
+		return current, nil
+	}
 	if p.Action == "create" && !current.Dispatched && enabled {
 		_, capacityErr := selectVPNServerByQuota(ctx, tx, vpnNodeRequest{RequestedID: s.ServerID, RequiredQuota: requiredQuota, OwnerRef: s.OwnerRef, IgnoreOperationID: o.ID})
 		if capacityErr != nil && !errors.Is(capacityErr, service.ErrVPNNoServer) {

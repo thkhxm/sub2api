@@ -53,6 +53,20 @@ func TestVPNManualRevokeDoesNotLeakSchedulingFieldsToNode(t *testing.T) {
 	require.Equal(t, map[string]any{"operation_id": op.ID, "owner_ref": repo.sub.OwnerRef, "action": "revoke"}, wire)
 	require.Equal(t, string(payload), string(op.Payload))
 }
+func TestVPNAdminCreateDoesNotLeakOvercommitFieldsToNode(t *testing.T) {
+	svc, repo, remote := vpnServiceFixture(t)
+	quota, enabled := VPNDefaultQuota, true
+	payload, err := json.Marshal(VPNOperationPayload{OperationID: remote.snapshot.LastOperationID, OwnerRef: repo.sub.OwnerRef, Action: "create", TargetServerID: repo.sub.ServerID, AllowOvercommit: true, DataLimit: &quota, Enabled: &enabled})
+	require.NoError(t, err)
+	op := &VPNOperation{ID: remote.snapshot.LastOperationID, SubscriptionID: repo.sub.ID, Payload: payload}
+	svc.process(context.Background(), op)
+	require.Equal(t, "succeeded", repo.finishState)
+	require.Len(t, remote.payloads, 1)
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal([]byte(remote.payloads[0]), &wire))
+	require.Equal(t, map[string]any{"operation_id": op.ID, "owner_ref": repo.sub.OwnerRef, "action": "create", "data_limit": float64(quota), "enabled": true}, wire)
+	require.Equal(t, string(payload), string(op.Payload))
+}
 
 func TestVPNManualDisabledOrUnhealthyTargetNeverRevokesSourceOrFallback(t *testing.T) {
 	for _, condition := range []string{"disabled_before_revoke", "disabled_before_create", "unhealthy_before_revoke"} {

@@ -666,6 +666,48 @@ describe('VPN administrator flow', () => {
     await flushPromises()
     expect(mocks.update).toHaveBeenCalledWith(8, { quota_bytes: 45.5 * GIB, enabled: false })
   })
+  it('requires explicit confirmation before sending an administrator overcommit request', async () => {
+    mocks.adminCreate.mockRejectedValueOnce({ reason: 'VPN_OVERCOMMIT_REQUIRED', message: 'capacity', metadata: {
+      server_id: '3', server_name: 'Node', required_quota_bytes: String(40 * GIB),
+      allocated_quota_bytes: String(1100 * GIB), node_quota_bytes: String(2048 * GIB), traffic_multiplier: '2', projected_allocation_ratio: '1.11328125'
+    } })
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    await button(wrapper, 'vpn.createForUser').trigger('click')
+    await flushPromises()
+    const dialog = wrapper.find('[role="dialog"]')
+    await dialog.find('select').setValue(17)
+    await dialog.findAll('button').find(item => item.text() === 'vpn.createForUser')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="vpn-create-overcommit"]').exists()).toBe(true)
+    const confirm = button(wrapper, 'vpn.overcommitCreate')
+    expect(confirm.attributes('disabled')).toBeDefined()
+    expect(mocks.adminCreate).toHaveBeenCalledTimes(1)
+    await wrapper.find('[data-testid="vpn-create-overcommit-confirm"]').setValue(true)
+    await confirm.trigger('click')
+    await flushPromises()
+    expect(mocks.adminCreate).toHaveBeenLastCalledWith(17, { allow_overcommit: true, target_server_id: 3, expected_quota_bytes: 40 * GIB })
+  })
+  it('clears an overcommit confirmation when a different user is selected', async () => {
+    mocks.listUsers.mockResolvedValue({ items: [{ id: 17, email: 'one@example.invalid' }, { id: 18, email: 'two@example.invalid' }] })
+    mocks.adminCreate.mockRejectedValueOnce({ reason: 'VPN_OVERCOMMIT_REQUIRED', metadata: {
+      server_id: '3', server_name: 'Node', required_quota_bytes: String(40 * GIB), allocated_quota_bytes: String(1100 * GIB), node_quota_bytes: String(2048 * GIB), traffic_multiplier: '2', projected_allocation_ratio: '1.11328125'
+    } })
+    const wrapper = view(AdminVpnView)
+    await flushPromises()
+    await button(wrapper, 'vpn.createForUser').trigger('click')
+    await flushPromises()
+    const dialog = wrapper.find('[role="dialog"]')
+    await dialog.find('select').setValue(17)
+    await dialog.findAll('button').find(item => item.text() === 'vpn.createForUser')!.trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="vpn-create-overcommit-confirm"]').setValue(true)
+    await dialog.find('select').setValue(18)
+    expect(wrapper.find('[data-testid="vpn-create-overcommit"]').exists()).toBe(false)
+    await dialog.findAll('button').find(item => item.text() === 'vpn.createForUser')!.trigger('click')
+    await flushPromises()
+    expect(mocks.adminCreate).toHaveBeenLastCalledWith(18)
+  })
   it('requires a manual target and retains the chosen node after a capacity failure', async () => {
     mocks.rotate.mockRejectedValueOnce({ status: 409, message: '目标节点容量不足' })
     const wrapper = view(AdminVpnView)

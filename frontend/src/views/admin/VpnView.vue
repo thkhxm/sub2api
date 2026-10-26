@@ -194,12 +194,18 @@
         <p class="text-sm text-gray-500">{{ t('vpn.createHint') }}</p>
         <p v-if="dialogError" role="alert" class="text-sm text-red-600">{{ dialogError }}</p>
         <form class="flex items-end gap-2" @submit.prevent="searchUsers">
-          <label class="min-w-0 flex-1 text-sm">{{ t('vpn.search') }}<input v-model="userQuery" class="input mt-1" /></label>
+          <label class="min-w-0 flex-1 text-sm">{{ t('vpn.search') }}<input v-model="userQuery" class="input mt-1" :disabled="busy" /></label>
           <button class="btn btn-secondary" :disabled="searching || busy">{{ t('vpn.searchUsers') }}</button>
         </form>
         <p v-if="searching" role="status">{{ t('vpn.loading') }}</p>
-        <label class="block text-sm">{{ t('vpn.selectUser') }}<select v-model="createUserId" class="input mt-1"><option :value="null" disabled>{{ t('vpn.selectUser') }}</option><option v-for="user in users" :key="user.id" :value="user.id">{{ user.email }} (#{{ user.id }})</option></select></label>
-        <div class="flex justify-end gap-2"><button class="btn btn-secondary" :disabled="busy" @click="showCreate = false">{{ t('vpn.cancel') }}</button><button class="btn btn-primary" :disabled="busy || !createUserId" @click="createSubscription">{{ t('vpn.createForUser') }}</button></div>
+        <label class="block text-sm">{{ t('vpn.selectUser') }}<select v-model="createUserId" class="input mt-1" :disabled="busy"><option :value="null" disabled>{{ t('vpn.selectUser') }}</option><option v-for="user in users" :key="user.id" :value="user.id">{{ user.email }} (#{{ user.id }})</option></select></label>
+        <div v-if="createOvercommit" role="alert" class="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200" data-testid="vpn-create-overcommit">
+          <p class="font-semibold">{{ t('vpn.overcommitTitle') }}</p>
+          <p>{{ t('vpn.overcommitDetails', { node: createOvercommit.serverName, quota: formatVpnBytes(createOvercommit.quota), allocated: formatVpnBytes(createOvercommit.allocated * createOvercommit.multiplier), capacity: formatVpnBytes(createOvercommit.capacity), ratio: (createOvercommit.ratio * 100).toFixed(1) }) }}</p>
+          <p>{{ t('vpn.overcommitRisk') }}</p>
+          <label class="flex items-start gap-2"><input v-model="createOvercommitConfirmed" type="checkbox" :disabled="busy" class="mt-0.5" data-testid="vpn-create-overcommit-confirm" /><span>{{ t('vpn.overcommitConfirm') }}</span></label>
+        </div>
+        <div class="flex justify-end gap-2"><button class="btn btn-secondary" :disabled="busy" @click="showCreate = false">{{ t('vpn.cancel') }}</button><button class="btn btn-primary" :disabled="busy || !createUserId || (!!createOvercommit && !createOvercommitConfirmed)" @click="createSubscription">{{ t(createOvercommit ? 'vpn.overcommitCreate' : 'vpn.createForUser') }}</button></div>
       </div>
     </BaseDialog>
 
@@ -360,6 +366,13 @@ const serverForm = reactive(blankServer())
 const userQuery = ref('')
 const users = ref<Array<{ id: number; email: string }>>([])
 const createUserId = ref<number | null>(null)
+const createOvercommit = ref<{ serverId: number; serverName: string; quota: number; allocated: number; capacity: number; multiplier: number; ratio: number } | null>(null)
+const createOvercommitConfirmed = ref(false)
+function resetCreateConfirmation() {
+  createOvercommit.value = null
+  createOvercommitConfirmed.value = false
+}
+watch(createUserId, () => { resetCreateConfirmation(); dialogError.value = '' })
 const searching = ref(false)
 const quotaGiB = ref(0)
 const subscriptionEnabled = ref(true)
@@ -564,6 +577,7 @@ async function probe(id: number) {
   finally { busy.value = false }
 }
 function openCreate() {
+  resetCreateConfirmation()
   dialogError.value = ''
   createUserId.value = null
   userQuery.value = ''
@@ -589,10 +603,15 @@ function updateSelected(subscription: VpnSubscription) {
 }
 async function createSubscription() {
   if (busy.value || !createUserId.value) return
+  if (createOvercommit.value && !createOvercommitConfirmed.value) return
   busy.value = true
   dialogError.value = ''
+  const userId = createUserId.value
   try {
-    const subscription = await adminVpnAPI.create(createUserId.value)
+    const confirmation = createOvercommit.value
+    const subscription = confirmation
+      ? await adminVpnAPI.create(userId, { allow_overcommit: true, target_server_id: confirmation.serverId, expected_quota_bytes: confirmation.quota })
+      : await adminVpnAPI.create(userId)
     showCreate.value = false
     page.value = 1
     query.value = ''
@@ -601,7 +620,19 @@ async function createSubscription() {
     updateSelected(subscription)
     app.showSuccess(t('vpn.accepted'))
     await load()
-  } catch (e) { dialogError.value = vpnError(e, t('vpn.actionFailed')) }
+  } catch (e) {
+    resetCreateConfirmation()
+    const err = e as { reason?: string; metadata?: Record<string, string> }
+    const m = err?.metadata
+    if (err?.reason === 'VPN_OVERCOMMIT_REQUIRED' && m && createUserId.value === userId) {
+      const values = { serverId: Number(m.server_id), serverName: m.server_name || '', quota: Number(m.required_quota_bytes), allocated: Number(m.allocated_quota_bytes), capacity: Number(m.node_quota_bytes), multiplier: Number(m.traffic_multiplier), ratio: Number(m.projected_allocation_ratio) }
+      if (Number.isSafeInteger(values.serverId) && values.serverId > 0 && Number.isSafeInteger(values.quota) && values.quota > 0 && Number.isSafeInteger(values.allocated) && values.allocated >= 0 && Number.isSafeInteger(values.capacity) && values.capacity > 0 && [1, 2].includes(values.multiplier) && Number.isFinite(values.ratio) && values.ratio >= 1) {
+        createOvercommit.value = values
+        return
+      }
+    }
+    dialogError.value = vpnError(e, t('vpn.actionFailed'))
+  }
   finally { busy.value = false }
 }
 function openEdit() {

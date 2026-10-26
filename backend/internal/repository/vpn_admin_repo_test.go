@@ -90,7 +90,7 @@ func TestVPNGroupsDefaultPreservesExistingAndEventuallyAppliesLatestQuota(t *tes
 	vpnTestServer(t, r, 0)
 	user := vpnTestUser(t, db, 1)
 	sub := vpnReserve(t, r, user)
-	require.Equal(t, int64(80*1024*1024*1024), sub.QuotaBytes)
+	require.Equal(t, service.VPNDefaultQuota, sub.QuotaBytes)
 	op, err := r.Claim(ctx)
 	require.NoError(t, err)
 	vpnApplyOperation(t, r, sub, op, sub.QuotaBytes, "active", "allowed")

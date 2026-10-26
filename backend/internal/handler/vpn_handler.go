@@ -125,12 +125,13 @@ func (h *VPNHandler) AdminList(c *gin.Context) {
 func (h *VPNHandler) AdminCreate(c *gin.Context) {
 	var in struct {
 		UserID int64 `json:"user_id"`
+		service.VPNCreateOptions
 	}
 	if c.ShouldBindJSON(&in) != nil || in.UserID <= 0 {
 		vpnReply(c, nil, service.ErrVPNInvalid)
 		return
 	}
-	v, e := h.svc.Create(c.Request.Context(), in.UserID, true, vpnActor(c))
+	v, e := h.svc.CreateForAdmin(c.Request.Context(), in.UserID, vpnActor(c), in.VPNCreateOptions)
 	vpnAccepted(c, v, e)
 }
 func (h *VPNHandler) AdminUpdate(c *gin.Context) {

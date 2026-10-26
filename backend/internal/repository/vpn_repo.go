@@ -160,14 +160,34 @@ func (r *vpnRepository) Eligibility(ctx context.Context, id int64) (bool, string
 	if err != nil {
 		return false, "", err
 	}
+	capacityLimited := false
 	for _, server := range servers {
-		if server.Enabled && server.Healthy && server.LastCheckedAt != nil && time.Since(*server.LastCheckedAt) <= 2*time.Minute && server.AllocationAvailableBytes != nil && *server.AllocationAvailableBytes >= group.QuotaBytes {
+		if !server.Enabled || !server.Healthy || server.LastCheckedAt == nil || time.Since(*server.LastCheckedAt) > 2*time.Minute || server.TrafficExhausted(time.Now()) {
+			continue
+		}
+		if server.AllocationAvailableBytes != nil && *server.AllocationAvailableBytes >= group.QuotaBytes {
 			return true, "", nil
 		}
+		capacityLimited = capacityLimited || server.AllocationAvailableBytes != nil
+	}
+	if capacityLimited {
+		return false, "capacity_insufficient", nil
 	}
 	return false, "no_available_server", nil
 }
 func (r *vpnRepository) Reserve(ctx context.Context, userID int64, admin bool, actor int64, owner string) (*service.VPNSubscription, error) {
+	return r.reserveVPN(ctx, userID, admin, actor, owner, service.VPNCreateOptions{}, false)
+}
+func (r *vpnRepository) ReserveAdmin(ctx context.Context, userID, actor int64, owner string, options service.VPNCreateOptions) (*service.VPNSubscription, error) {
+	return r.reserveVPN(ctx, userID, true, actor, owner, options, true)
+}
+func (r *vpnRepository) reserveVPN(ctx context.Context, userID int64, admin bool, actor int64, owner string, options service.VPNCreateOptions, reportOvercommit bool) (*service.VPNSubscription, error) {
+	if options.AllowOvercommit && (!admin || options.TargetServerID <= 0 || options.ExpectedQuotaBytes <= 0) {
+		return nil, service.ErrVPNInvalid
+	}
+	if !options.AllowOvercommit && (options.TargetServerID != 0 || options.ExpectedQuotaBytes != 0) {
+		return nil, service.ErrVPNInvalid
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -211,7 +231,12 @@ func (r *vpnRepository) Reserve(ctx context.Context, userID int64, admin bool, a
 	if err != nil {
 		return nil, err
 	}
-	serverID, err := selectVPNServerByQuota(ctx, tx, vpnNodeRequest{RequiredQuota: quota, OwnerRef: owner})
+	if options.AllowOvercommit && options.ExpectedQuotaBytes != quota {
+		err := service.ErrVPNBusy.WithMetadata(map[string]string{"cause": "quota_changed"})
+		err.Message = "用户月额度已变化，请重新发起开通并确认当前额度"
+		return nil, err
+	}
+	serverID, err := selectVPNServerByQuota(ctx, tx, vpnNodeRequest{RequiredQuota: quota, OwnerRef: owner, RequestedID: options.TargetServerID, AllowOvercommit: options.AllowOvercommit, ReportOvercommit: reportOvercommit})
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +248,7 @@ func (r *vpnRepository) Reserve(ctx context.Context, userID int64, admin bool, a
 		return nil, err
 	}
 	enabled := true
-	p := service.VPNOperationPayload{OperationID: uuid.NewString(), OwnerRef: owner, Action: "create", DataLimit: &quota, Enabled: &enabled}
+	p := service.VPNOperationPayload{OperationID: uuid.NewString(), OwnerRef: owner, Action: "create", DataLimit: &quota, Enabled: &enabled, AllowOvercommit: options.AllowOvercommit, TargetServerID: options.TargetServerID}
 	payload, _ := json.Marshal(p)
 	if _, err = tx.ExecContext(ctx, `INSERT INTO vpn_operations(id,subscription_id,action,payload,actor_id) VALUES($1,$2,'create',$3,$4)`, p.OperationID, id, string(payload), actor); err != nil {
 		return nil, err

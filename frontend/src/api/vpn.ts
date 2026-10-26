@@ -162,7 +162,8 @@ export const adminVpnAPI = {
   summary: async () => (await apiClient.get<VpnSummary>('/admin/vpn/summary')).data,
   subscriptions: async (params: { page: number; page_size: number; q?: string; server_id?: number; status?: string; sort_by?: 'created_at' | 'used_bytes'; sort_order?: 'asc' | 'desc' }) =>
     (await apiClient.get<{ items: VpnSubscription[]; total: number; page: number; page_size: number }>('/admin/vpn/subscriptions', { params })).data,
-  create: async (userId: number) => (await apiClient.post<VpnSubscription>('/admin/vpn/subscriptions', { user_id: userId })).data,
+  create: async (userId: number, confirmation?: { allow_overcommit: true; target_server_id: number; expected_quota_bytes: number }) =>
+    (await apiClient.post<VpnSubscription>('/admin/vpn/subscriptions', { user_id: userId, ...confirmation })).data,
   update: async (id: number, input: { quota_bytes?: number; enabled?: boolean }) =>
     (await apiClient.put<VpnSubscription>(`/admin/vpn/subscriptions/${id}`, input)).data,
   rotate: async (id: number, targetServerId: number, options?: { allow_offline_migration?: boolean }) =>

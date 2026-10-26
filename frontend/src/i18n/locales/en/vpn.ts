@@ -1,7 +1,7 @@
 export default {
   vpn: {
     title: 'VPN subscription', adminTitle: 'VPN management', description: 'Subscription, monthly traffic and connection status',
-    policy: 'One subscription per person. New subscriptions currently default to {quota} per month; existing subscriptions retain their actual quota. Resets at 00:00 Shanghai time on the 22nd, with no rollover. Mid-month activation includes the full quota.',
+    policy: 'One subscription per person. New subscriptions currently default to {quota} per month; existing subscriptions retain their actual quota. Resets at 00:00 Shanghai time on the 22nd, with no rollover. Mid-month activation includes the full quota. User quota counts upload plus download; node transfer is calculated separately with the node multiplier.',
     createPolicy: 'A positive balance is required to apply; no payment is deducted. A later zero balance does not disable your subscription. Servers are assigned automatically. Users cannot delete or transfer their own subscription. Contact an administrator to delete it before activating again.',
     create: 'Activate subscription', createForUser: 'Activate for a user', noSubscription: 'No VPN subscription yet', unavailable: 'Activation is unavailable. Please contact an administrator.',
     refresh: 'Refresh status', loading: 'Loading…', loadFailed: 'Unable to load. Please retry.', actionFailed: 'Operation failed. Please retry.', accepted: 'Request accepted. Waiting for the status to update.',
@@ -26,7 +26,12 @@ export default {
     enabled: 'Enabled', disabled: 'Disabled', healthy: 'Healthy', unhealthy: 'Unavailable', personalCount: 'Personal accounts', assignedCount: 'Assigned', pendingCount: 'Reserved', lastChecked: 'Last checked',
     save: 'Save', cancel: 'Cancel', edit: 'Edit quota and status', details: 'Details', noServers: 'No servers configured', noResults: 'No matching subscriptions',
     search: 'Search user / email', searchUsers: 'Find users', selectUser: 'Select a user', allServers: 'All servers', allStatuses: 'All statuses', filter: 'Search',
-    createHint: 'Automatically selects a healthy, enabled server with enough allocatable quota and the lowest allocation ratio. Administrator activation does not require a positive balance. An existing subscription is returned unchanged.',
+    createHint: 'Prefers a healthy, enabled server with enough quota and the lowest allocation ratio. Administrators can activate without a positive balance and explicitly confirm overcommit when capacity is insufficient. Self-service remains capacity-limited. Existing subscriptions are returned unchanged.',
+    overcommitTitle: 'Insufficient allocatable quota: confirm overcommit',
+    overcommitDetails: 'Activate a monthly user quota of {quota} on “{node}”. Allocated node transfer quota is {allocated} / {capacity}; the projected allocation ratio is {ratio}%.',
+    overcommitRisk: 'Overcommit does not increase provider traffic. If users use their full quotas, the node may run out of traffic early and affect everyone on it.',
+    overcommitConfirm: 'I understand the risk and confirm overcommitting this user subscription on this node.',
+    overcommitCreate: 'Confirm overcommit and activate',
     quotaGiB: 'Monthly quota (GiB)', invalidQuota: 'Enter a positive quota whose byte value does not exceed the safe integer limit.',
     invalidHttps: 'Use an HTTPS server URL without an embedded username or password.',
     retry: 'Retry original operation', revoke: 'Choose server and rotate', revokeConfirm: 'Rotate credentials on the current server “{name}” without reserving extra quota. Usage in the current period is preserved. The old subscription URL and credentials become invalid and old connections are disconnected. All devices belonging to this user must import the subscription again. Continue?',
@@ -68,7 +73,7 @@ export default {
     selectGroup: 'Select a VPN group', switchGroup: 'Switch user group', confirmSwitchGroup: 'Confirm group change',
     switchGroupHint: 'The target group quota applies asynchronously. Current usage is preserved.',
     switchGroupConfirm: 'Move this user to “{name}” and asynchronously change the existing subscription quota to {quota}. Usage is preserved. Connections may be paused if usage exceeds the new quota. Continue?',
-    reasons: { balance_required: 'A positive account balance is required to activate. No payment will be deducted.', user_inactive: 'Your account is disabled and cannot activate a subscription.', no_available_server: 'No healthy, enabled server is currently available. Refresh later or contact an administrator.', already_exists: 'You already have a subscription. Refresh to view it.' },
+    reasons: { balance_required: 'A positive account balance is required to activate. No payment will be deducted.', user_inactive: 'Your account is disabled and cannot activate a subscription.', capacity_insufficient: 'Insufficient allocatable monthly quota for self-service activation. Contact an administrator.', no_available_server: 'No allocatable server: it may be disabled, have expired checks or unavailable statistics, or have exhausted traffic. Contact an administrator.', already_exists: 'You already have a subscription. Refresh to view it.' },
     states: { active: 'Active', disabled: 'Disabled', limited: 'Over quota', expired: 'Expired', provisioning: 'Provisioning', deleting: 'Deleting', deleted: 'Deleted', pending: 'Pending', running: 'Running', applied: 'Applied', failed: 'Failed', succeeded: 'Succeeded', allowed: 'Allowed', blocked: 'Blocked', unknown: 'Unknown', ok: 'Current', stale: 'Stale sample', gap_detected: 'Accounting gap', partial_history: 'Incomplete history' }
   }
 }

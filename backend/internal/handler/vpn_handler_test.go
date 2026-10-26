@@ -18,6 +18,7 @@ type vpnHandlerTestRepo struct {
 	actor, userID, refreshID int64
 	admin                    bool
 	reserveError             error
+	createOptions            service.VPNCreateOptions
 }
 
 func (r *vpnHandlerTestRepo) GetUserSubscription(_ context.Context, id int64) (*service.VPNSubscription, error) {
@@ -36,6 +37,10 @@ func (r *vpnHandlerTestRepo) Reserve(_ context.Context, id int64, admin bool, ac
 func (r *vpnHandlerTestRepo) RequestRefresh(_ context.Context, id int64) (bool, error) {
 	r.refreshID = id
 	return false, nil
+}
+func (r *vpnHandlerTestRepo) ReserveAdmin(ctx context.Context, id, actor int64, owner string, options service.VPNCreateOptions) (*service.VPNSubscription, error) {
+	r.createOptions = options
+	return r.Reserve(ctx, id, true, actor, owner)
 }
 func (r *vpnHandlerTestRepo) GetSubscription(_ context.Context, id int64) (*service.VPNSubscription, error) {
 	return &service.VPNSubscription{ID: id, UserID: 41, Status: "provisioning", ApplyStatus: "pending"}, nil
@@ -78,7 +83,7 @@ func TestVPNHandlerUserCannotOverrideSubject(t *testing.T) {
 			}
 			r := vpnTestRoute(fn, true)
 			w := httptest.NewRecorder()
-			req := httptest.NewRequest("POST", "/vpn/999?user_id=999", strings.NewReader(`{"user_id":999,"admin":true}`))
+			req := httptest.NewRequest("POST", "/vpn/999?user_id=999", strings.NewReader(`{"user_id":999,"admin":true,"allow_overcommit":true,"target_server_id":1,"expected_quota_bytes":42949672960}`))
 			req.Header.Set("Content-Type", "application/json")
 			r.ServeHTTP(w, req)
 			expected := http.StatusOK
@@ -92,12 +97,29 @@ func TestVPNHandlerUserCannotOverrideSubject(t *testing.T) {
 			if name == "create" {
 				require.Equal(t, int64(41), repo.actor)
 				require.False(t, repo.admin)
+				require.False(t, repo.createOptions.AllowOvercommit)
 			}
 			if name == "refresh" {
 				require.Equal(t, int64(12), repo.refreshID)
 			}
 		})
 	}
+}
+func TestVPNAdminCreateOvercommitValidation(t *testing.T) {
+	for _, body := range []string{`{"user_id":7,"allow_overcommit":true}`, `{"user_id":7,"allow_overcommit":true,"target_server_id":3}`, `{"user_id":7,"target_server_id":3}`, `{"user_id":7,"allow_overcommit":true,"target_server_id":3,"expected_quota_bytes":-1}`} {
+		w := httptest.NewRecorder()
+		h := NewVPNHandler(service.NewVPNService(&vpnHandlerTestRepo{}, nil, nil))
+		vpnTestRoute(h.AdminCreate, true).ServeHTTP(w, httptest.NewRequest("POST", "/vpn/1", strings.NewReader(body)))
+		require.Equal(t, 400, w.Code, body)
+	}
+	repo := &vpnHandlerTestRepo{}
+	h := NewVPNHandler(service.NewVPNService(repo, nil, nil))
+	w := httptest.NewRecorder()
+	vpnTestRoute(h.AdminCreate, true).ServeHTTP(w, httptest.NewRequest("POST", "/vpn/1", strings.NewReader(`{"user_id":7,"allow_overcommit":true,"target_server_id":3,"expected_quota_bytes":42949672960}`)))
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.True(t, repo.admin)
+	require.Equal(t, int64(7), repo.userID)
+	require.Equal(t, service.VPNCreateOptions{AllowOvercommit: true, TargetServerID: 3, ExpectedQuotaBytes: service.VPNDefaultQuota}, repo.createOptions)
 }
 func TestVPNHandlerCreateErrorStatus(t *testing.T) {
 	for _, tc := range []struct {

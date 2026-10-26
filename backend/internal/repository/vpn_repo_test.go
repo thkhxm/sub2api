@@ -76,6 +76,10 @@ func vpnTestRepositoryMigrations(t *testing.T, routing bool) (*vpnRepository, *s
 	require.NoError(t, e)
 	_, e = db.Exec(string(migration))
 	require.NoError(t, e)
+	migration, e = os.ReadFile("../../migrations/247_vpn_default_quota_40g.sql")
+	require.NoError(t, e)
+	_, e = db.Exec(string(migration))
+	require.NoError(t, e)
 	return &vpnRepository{db: db}, db
 }
 func vpnTestUser(t *testing.T, db *sql.DB, balance int) int64 {
