@@ -39,22 +39,26 @@ func TestOpenAICreditsFallbackQuotaGate(t *testing.T) {
 		{"显式关闭立即恢复暂停", func(a *Account) { a.Extra[OpenAICreditsFallbackEnabledExtraKey] = false }, true},
 		{"快照缺失", func(a *Account) { delete(a.Extra, openaiQuotaCreditsKey) }, true},
 		{"快照过期", func(a *Account) {
-			v := a.Extra[openaiQuotaCreditsKey].(openAICreditsSnapshot)
+			v, ok := a.Extra[openaiQuotaCreditsKey].(openAICreditsSnapshot)
+			require.True(t, ok)
 			v.FetchedAt = now.Add(-3 * time.Minute).Unix()
 			a.Extra[openaiQuotaCreditsKey] = v
 		}, true},
 		{"未来快照不可信", func(a *Account) {
-			v := a.Extra[openaiQuotaCreditsKey].(openAICreditsSnapshot)
+			v, ok := a.Extra[openaiQuotaCreditsKey].(openAICreditsSnapshot)
+			require.True(t, ok)
 			v.FetchedAt = now.Add(time.Hour).Unix()
 			a.Extra[openaiQuotaCreditsKey] = v
 		}, true},
 		{"查询失败使旧积分失效", func(a *Account) {
-			v := a.Extra[openaiQuotaCreditsKey].(openAICreditsSnapshot)
+			v, ok := a.Extra[openaiQuotaCreditsKey].(openAICreditsSnapshot)
+			require.True(t, ok)
 			v.ErrorCode = "CREDITS_QUERY_FAILED"
 			a.Extra[openaiQuotaCreditsKey] = v
 		}, true},
 		{"未知积分", func(a *Account) {
-			v := a.Extra[openaiQuotaCreditsKey].(openAICreditsSnapshot)
+			v, ok := a.Extra[openaiQuotaCreditsKey].(openAICreditsSnapshot)
+			require.True(t, ok)
 			v.Credits = nil
 			a.Extra[openaiQuotaCreditsKey] = v
 		}, true},
@@ -93,7 +97,8 @@ func TestOpenAICreditsFallbackBalanceValidation(t *testing.T) {
 		{"0.000000000000000001", true}, {"12345678901234567890.0123", true},
 	} {
 		a := creditsFallbackTestAccount(now)
-		v := a.Extra[openaiQuotaCreditsKey].(openAICreditsSnapshot)
+		v, ok := a.Extra[openaiQuotaCreditsKey].(openAICreditsSnapshot)
+		require.True(t, ok)
 		v.Credits.Balance = &tc.value
 		a.Extra[openaiQuotaCreditsKey] = v
 		require.Equal(t, tc.available, openAIHasFreshSpendableCredits(a, now), tc.value)
