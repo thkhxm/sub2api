@@ -1071,9 +1071,14 @@ export default {
 	      failed: 'Reset request failed'
 	    }
 	  },
+      creditsFallback: {
+        title: 'Use credits after included usage is exhausted',
+        hint: 'Off by default. At 100% included usage, continue only when a recent query confirms spendable Codex credits. Existing pause rules apply when credits are unavailable or unconfirmed.',
+        enabledHint: 'OpenAI will charge this upstream account’s Codex credits for actual usage. Early-pause thresholds and other protections remain active. Reset-credit settings are independent.'
+      },
       autoResetCredit: {
 	    title: 'Automatically use reset credits',
-	    hint: 'Uses the earliest-expiring available credit only when actual usage reaches a threshold. Off by default; the account remains paused if no credit is available or reset fails.',
+	    hint: 'Uses the earliest-expiring reset credit only when actual usage reaches a threshold. Off by default. Existing pause rules apply if none are available or reset fails; separately enabled Codex credit fallback remains independent.',
 	    threshold5h: '5h auto-reset threshold (%)',
 	    threshold7d: '7d auto-reset threshold (%)',
 	    thresholdHint: 'Each window is evaluated independently. Enter 0.1–100; both default to 100.',

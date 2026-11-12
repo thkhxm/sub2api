@@ -1886,6 +1886,47 @@ describe('EditAccountModal', () => {
   })
 })
 
+describe('EditAccountModal credits 续用开关', () => {
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+  })
+
+  it('默认关闭，仅在 OpenAI OAuth 母账号显示', () => {
+    const parent = mountModal(buildOpenAIOAuthParentAccount())
+    expect(parent.get('[data-testid="credits-fallback-enabled"]').attributes('aria-checked')).toBe('false')
+    parent.unmount()
+    for (const account of [buildAccount(), buildOpenAISetupTokenAccount(), buildOpenAISparkShadowAccount()]) {
+      const wrapper = mountModal(account)
+      expect(wrapper.find('[data-testid="credits-fallback-settings"]').exists()).toBe(false)
+      wrapper.unmount()
+    }
+  })
+
+  it.each([false, true])('从 %s 切换并保存，保留用卡设置且不回写积分快照', async (enabled) => {
+    const account = buildOpenAIOAuthParentAccount()
+    account.extra = {
+      openai_credits_fallback_enabled: enabled,
+      auto_reset_credit_enabled: false,
+      auto_pause_7d_threshold: 0.9,
+      codex_credits_snapshot: { credits: { has_credits: true, unlimited: false, balance: '123' }, fetched_at: 123456 }
+    }
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="credits-fallback-enabled"]')
+    expect(toggle.attributes('aria-checked')).toBe(String(enabled))
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-checked')).toBe(String(!enabled))
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra).toMatchObject({ openai_credits_fallback_enabled: !enabled, auto_reset_credit_enabled: false, auto_pause_7d_threshold: 0.9 })
+    expect(extra).not.toHaveProperty('codex_credits_snapshot')
+    wrapper.unmount()
+  })
+})
+
 describe('EditAccountModal OpenAI 自动使用重置卡', () => {
   beforeEach(() => {
     authIsSimpleMode.value = true

@@ -60,6 +60,15 @@ func normalizeOpenAIAutoResetCreditExtra(platform, accountType string, isShadow 
 	}
 	normalized := cloneOpenAIAutoResetExtra(extra)
 	delete(normalized, OpenAIAutoResetCreditStateExtraKey)
+	delete(normalized, openaiQuotaCreditsKey)
+	if value, exists := normalized[OpenAICreditsFallbackEnabledExtraKey]; exists {
+		if platform != PlatformOpenAI || accountType != AccountTypeOAuth || isShadow {
+			return nil, infraerrors.BadRequest("OPENAI_CREDITS_FALLBACK_ACCOUNT_INVALID", "credits fallback is only supported for OpenAI OAuth parent accounts")
+		}
+		if _, ok := value.(bool); !ok {
+			return nil, infraerrors.BadRequest("OPENAI_CREDITS_FALLBACK_ENABLED_INVALID", "openai_credits_fallback_enabled must be a boolean")
+		}
+	}
 
 	_, hasEnabled := normalized[OpenAIAutoResetCreditEnabledExtraKey]
 	_, has5h := normalized[OpenAIAutoResetCredit5hThresholdExtraKey]
@@ -103,7 +112,9 @@ func stripOpenAIAutoResetCreditManagedExtra(extra map[string]any, stripConfig bo
 		return nil
 	}
 	delete(extra, OpenAIAutoResetCreditStateExtraKey)
+	delete(extra, openaiQuotaCreditsKey)
 	if stripConfig {
+		delete(extra, OpenAICreditsFallbackEnabledExtraKey)
 		delete(extra, OpenAIAutoResetCreditEnabledExtraKey)
 		delete(extra, OpenAIAutoResetCredit5hThresholdExtraKey)
 		delete(extra, OpenAIAutoResetCredit7dThresholdExtraKey)

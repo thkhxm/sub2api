@@ -90,6 +90,7 @@ type OpenAICredits struct {
 type openAICreditsSnapshot struct {
 	Credits   *OpenAICredits `json:"credits"`
 	FetchedAt int64          `json:"fetched_at"`
+	ErrorCode string         `json:"error_code,omitempty"`
 }
 
 // OpenAIQuotaUsage is the typed projection of /wham/usage we expose to the UI.
