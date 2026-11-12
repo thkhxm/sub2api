@@ -54,10 +54,8 @@ func openAIHasFreshSpendableCredits(account *Account, now time.Time) bool {
 		return false
 	}
 	credits := snapshot.Credits
-	if credits.Unlimited {
-		return true
-	}
-	if !credits.HasCredits || credits.Balance == nil {
+	// 只允许消费明确的有限余额，不能把 unlimited 当作零余额或未知余额的豁免。
+	if credits.Unlimited || !credits.HasCredits || credits.Balance == nil {
 		return false
 	}
 	// 保留上游十进制精度，同时拒绝非十进制、无限值和异常长输入。

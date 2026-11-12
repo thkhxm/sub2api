@@ -107,7 +107,12 @@ func TestOpenAICreditsFallbackBalanceValidation(t *testing.T) {
 	}
 	a := creditsFallbackTestAccount(now)
 	a.Extra[openaiQuotaCreditsKey] = openAICreditsSnapshot{Credits: &OpenAICredits{Unlimited: true}, FetchedAt: now.Unix()}
-	require.True(t, openAIHasFreshSpendableCredits(a, now))
+	require.False(t, openAIHasFreshSpendableCredits(a, now))
+	for _, balance := range []string{"0", "1"} {
+		a.Extra[openaiQuotaCreditsKey] = openAICreditsSnapshot{Credits: &OpenAICredits{HasCredits: true, Unlimited: true, Balance: &balance}, FetchedAt: now.Unix()}
+		paused, _ := shouldAutoPauseOpenAIAccountByQuota(context.Background(), a)
+		require.True(t, paused, "无限额度标记不能绕过仅消费当前余额的限制")
+	}
 	a.Extra[openaiQuotaCreditsKey] = openAICreditsSnapshot{Credits: &OpenAICredits{HasCredits: true}, FetchedAt: now.Unix()}
 	require.False(t, openAIHasFreshSpendableCredits(a, now))
 }

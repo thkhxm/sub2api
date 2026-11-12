@@ -1073,7 +1073,7 @@ export default {
 	  },
       creditsFallback: {
         title: 'Use credits after included usage is exhausted',
-        hint: 'Off by default. At 100% included usage, continue only when a recent query confirms spendable Codex credits. Existing pause rules apply when credits are unavailable or unconfirmed.',
+        hint: 'Off by default. At 100% included usage, continue only when a recent query confirms a finite, positive Codex credit balance. A zero, unknown or expired balance restores the existing pause rules; unlimited credits do not bypass this check.',
         enabledHint: 'OpenAI will charge this upstream account’s Codex credits for actual usage. Early-pause thresholds and other protections remain active. Reset-credit settings are independent.'
       },
       autoResetCredit: {
