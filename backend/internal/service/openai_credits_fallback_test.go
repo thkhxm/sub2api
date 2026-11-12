@@ -142,6 +142,24 @@ func TestOpenAICreditsFallbackPreservesSchedulerGuards(t *testing.T) {
 	}
 }
 
+func TestOpenAICreditsFallbackZeroBalanceOverridesPauseExemption(t *testing.T) {
+	now := time.Now()
+	for _, balance := range []string{"0", "-1", ""} {
+		a := creditsFallbackTestAccount(now)
+		a.Extra["auto_pause_5h_disabled"] = true
+		a.Extra["auto_pause_7d_disabled"] = true
+		a.Extra[openaiQuotaCreditsKey] = openAICreditsSnapshot{Credits: &OpenAICredits{HasCredits: true, Balance: &balance}, FetchedAt: now.Unix()}
+		paused, reason := shouldAutoPauseOpenAIAccountByQuota(context.Background(), a)
+		require.True(t, paused)
+		require.Equal(t, "credits_balance_unavailable", reason.reason)
+		require.False(t, isOpenAICompatibleAccountEligibleForRequest(context.Background(), a, PlatformOpenAI, "", false, ""))
+		// 未用尽订阅额度时仍可以使用订阅本身，不会消耗 credits。
+		a.Extra["codex_7d_used_percent"] = 50.0
+		paused, _ = shouldAutoPauseOpenAIAccountByQuota(context.Background(), a)
+		require.False(t, paused)
+	}
+}
+
 func TestOpenAICreditsFallbackConfigAndManagedSnapshot(t *testing.T) {
 	extra, err := normalizeOpenAIAutoResetCreditExtra(PlatformOpenAI, AccountTypeOAuth, false, map[string]any{
 		OpenAICreditsFallbackEnabledExtraKey: true,

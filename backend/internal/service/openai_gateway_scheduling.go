@@ -534,8 +534,17 @@ func shouldAutoPauseOpenAIAccountByQuota(ctx context.Context, account *Account) 
 	if account == nil || !account.IsOpenAI() {
 		return false, openAIQuotaAutoPauseDecision{}
 	}
-	if openAICreditsCoverExhaustedQuota(ctx, account, time.Now()) {
+	creditsNow := time.Now()
+	if openAICreditsCoverExhaustedQuota(ctx, account, creditsNow) {
 		return false, openAIQuotaAutoPauseDecision{}
+	}
+	// 续用开关只授权消费当前正余额；普通暂停豁免不能绕过余额耗尽或未知保护。
+	if OpenAICreditsFallbackEnabled(account) && !openAIHasFreshSpendableCredits(account, creditsNow) {
+		for _, window := range []string{"5h", "7d"} {
+			if used, ok := resolveOpenAIQuotaUtilization(account.Extra, window, creditsNow); ok && used >= 1 {
+				return true, openAIQuotaAutoPauseDecision{window: window, threshold: 1, utilization: used, reason: "credits_balance_unavailable"}
+			}
+		}
 	}
 	// 自动用卡有独立阈值：达到消费阈值时必须先退出调度；仅达到普通暂停阈值时，
 	// 只有新鲜状态明确存在可用卡才继续放行到消费阈值。
