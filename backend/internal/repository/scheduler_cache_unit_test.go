@@ -487,6 +487,33 @@ func TestSchedulerMetadataPayload_KeepsOpenAIAutoResetCreditFields(t *testing.T)
 	require.Equal(t, checkedAt, state["checked_at"])
 }
 
+func TestSchedulerCacheCreditsFallbackPolicyAndSnapshot(t *testing.T) {
+	ctx := context.Background()
+	cache, redis := newSchedulerCacheUnitWithRedis(t)
+	account := service.Account{ID: 88, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true}
+	for _, enabled := range []bool{true, false} {
+		account.Extra = map[string]any{
+			service.OpenAICreditsFallbackEnabledExtraKey: enabled,
+			"codex_credits_snapshot": map[string]any{
+				"credits":    map[string]any{"has_credits": true, "unlimited": false, "balance": "125.50"},
+				"fetched_at": float64(time.Now().Unix()),
+			},
+			"unrelated_private_value": "不得进入精简缓存",
+		}
+		require.NoError(t, cache.SetAccount(ctx, &account))
+		full, err := cache.GetAccount(ctx, account.ID)
+		require.NoError(t, err)
+		require.Equal(t, enabled, service.OpenAICreditsFallbackEnabled(full))
+		raw, err := redis.Get("sched:meta:88")
+		require.NoError(t, err)
+		var metadata service.Account
+		require.NoError(t, json.Unmarshal([]byte(raw), &metadata))
+		require.Equal(t, enabled, service.OpenAICreditsFallbackEnabled(&metadata))
+		require.Equal(t, account.Extra["codex_credits_snapshot"], metadata.Extra["codex_credits_snapshot"])
+		require.NotContains(t, metadata.Extra, "unrelated_private_value")
+	}
+}
+
 func TestBuildSchedulerMetadataAccount_KeepsQuotaStateForCachedAccounts(t *testing.T) {
 	now := time.Now().UTC()
 	activeStart := now.Add(-time.Hour).Format(time.RFC3339)

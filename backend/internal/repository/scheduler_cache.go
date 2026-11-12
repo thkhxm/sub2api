@@ -1339,6 +1339,9 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		service.OpenAIAutoResetCredit5hThresholdExtraKey,
 		service.OpenAIAutoResetCredit7dThresholdExtraKey,
 		service.OpenAIAutoResetCreditStateExtraKey,
+		// credits 续用的候选过滤也依赖精简缓存，必须保留授权和带时间的余额快照。
+		service.OpenAICreditsFallbackEnabledExtraKey,
+		"codex_credits_snapshot",
 		"model_rate_limits",
 		service.UpstreamBillingProbeExtraKey,
 		service.GrokMediaEligibleExtraKey,

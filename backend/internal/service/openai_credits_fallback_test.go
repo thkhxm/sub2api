@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -191,4 +193,30 @@ func TestOpenAICreditsFallbackRefreshWithoutRedeemingResetCard(t *testing.T) {
 	before := quota.queryCalls.Load()
 	require.NoError(t, svc.evaluateAccount(context.Background(), a.ID))
 	require.Equal(t, before, quota.queryCalls.Load())
+}
+
+func TestOpenAICreditsFallbackSchedulerSelection(t *testing.T) {
+	for _, advanced := range []string{"true", "false"} {
+		for _, enabled := range []bool{true, false} {
+			t.Run(advanced+fmt.Sprint(enabled), func(t *testing.T) {
+				resetOpenAIAdvancedSchedulerSettingCacheForTest()
+				ctx := context.Background()
+				groupID := int64(101201)
+				account := creditsFallbackTestAccount(time.Now())
+				account.Concurrency = 1
+				account.Extra[OpenAICreditsFallbackEnabledExtraKey] = enabled
+				account.Credentials = map[string]any{"model_mapping": map[string]any{"gpt-6-astra": "gpt-6-astra"}}
+				svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{*account}}, cache: &schedulerTestGatewayCache{}, cfg: &config.Config{}, rateLimitService: newOpenAIAdvancedSchedulerRateLimitService(advanced), concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{})}
+				selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "", "gpt-6-astra", nil, OpenAIUpstreamTransportAny, false)
+				if enabled {
+					require.NoError(t, err)
+					require.NotNil(t, selection)
+					require.Equal(t, account.ID, selection.Account.ID)
+				} else {
+					require.ErrorIs(t, err, ErrNoAvailableAccounts)
+					require.Nil(t, selection)
+				}
+			})
+		}
+	}
 }
