@@ -435,6 +435,38 @@ var (
 			},
 		},
 	}
+	// BalanceRequestsColumns holds the columns for the "balance_requests" table.
+	BalanceRequestsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "user_id", Type: field.TypeInt64},
+		{Name: "amount_usd", Type: field.TypeFloat64, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "approved_amount_usd", Type: field.TypeFloat64, Nullable: true, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "note", Type: field.TypeString, Size: 1000, Default: ""},
+		{Name: "status", Type: field.TypeString, Size: 20, Default: "pending"},
+		{Name: "reviewer_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "reviewed_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "reject_reason", Type: field.TypeString, Size: 500, Default: ""},
+	}
+	// BalanceRequestsTable holds the schema information for the "balance_requests" table.
+	BalanceRequestsTable = &schema.Table{
+		Name:       "balance_requests",
+		Columns:    BalanceRequestsColumns,
+		PrimaryKey: []*schema.Column{BalanceRequestsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "balancerequest_user_id_status",
+				Unique:  false,
+				Columns: []*schema.Column{BalanceRequestsColumns[3], BalanceRequestsColumns[7]},
+			},
+			{
+				Name:    "balancerequest_status_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{BalanceRequestsColumns[7], BalanceRequestsColumns[1]},
+			},
+		},
+	}
 	// BatchImageEventsColumns holds the columns for the "batch_image_events" table.
 	BatchImageEventsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -957,6 +989,7 @@ var (
 		{Name: "allow_messages_dispatch", Type: field.TypeBool, Default: false},
 		{Name: "allow_live", Type: field.TypeBool, Default: false},
 		{Name: "force_openai_fast", Type: field.TypeBool, Default: false},
+		{Name: "force_openai_ultrafast", Type: field.TypeBool, Default: false},
 		{Name: "free_openai_fast", Type: field.TypeBool, Default: false},
 		{Name: "require_oauth_only", Type: field.TypeBool, Default: false},
 		{Name: "require_privacy_set", Type: field.TypeBool, Default: false},
@@ -2100,6 +2133,7 @@ var (
 		AnnouncementReadsTable,
 		AuthIdentitiesTable,
 		AuthIdentityChannelsTable,
+		BalanceRequestsTable,
 		BatchImageEventsTable,
 		BatchImageItemsTable,
 		BatchImageJobsTable,
@@ -2166,6 +2200,9 @@ func init() {
 	AuthIdentityChannelsTable.ForeignKeys[0].RefTable = AuthIdentitiesTable
 	AuthIdentityChannelsTable.Annotation = &entsql.Annotation{
 		Table: "auth_identity_channels",
+	}
+	BalanceRequestsTable.Annotation = &entsql.Annotation{
+		Table: "balance_requests",
 	}
 	BatchImageEventsTable.Annotation = &entsql.Annotation{
 		Table: "batch_image_events",
